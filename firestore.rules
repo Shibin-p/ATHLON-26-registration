@@ -1,0 +1,214 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ========================================================
+    // HELPER FUNCTIONS
+    // ========================================================
+
+    // 1. Basic authentication checks
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // 2. Fetch authenticated user profile from Firestore
+    function getUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasUserProfile() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isActiveUser() {
+      return hasUserProfile() && getUserDoc().active == true;
+    }
+
+    // 3. Role-based authorization helpers
+    function isSuperCoordinator() {
+      return isActiveUser() && getUserDoc().role == 'super_coordinator';
+    }
+
+    function isViewCoordinator() {
+      return isActiveUser() && getUserDoc().role == 'view_coordinator';
+    }
+
+    function isYearCoordinator() {
+      return isActiveUser() && getUserDoc().role == 'year_coordinator';
+    }
+
+    // 4. Scope helper for Year Coordinator
+    function matchesYearScope(year) {
+      return isYearCoordinator() && (
+        getUserDoc().assignedYear == year ||
+        (getUserDoc().assignedYear is string && year is string && getUserDoc().assignedYear.upper() == year.upper())
+      );
+    }
+
+    // 5. Initial System Bootstrap check
+    // If dedicated system/status does NOT exist yet, initial Super Coordinator bootstrap is allowed
+    function isSystemUninitialized() {
+      return !exists(/databases/$(database)/documents/system/status);
+    }
+
+    // ========================================================
+    // USERS COLLECTION: users/{userId}
+    // ========================================================
+    match /users/{userId} {
+      // Super Coordinators and View Coordinators can read profiles; users can always read their own
+      allow read: if isAuthenticated() && (
+        isOwner(userId) || isSuperCoordinator() || isViewCoordinator()
+      );
+
+      // Super Coordinator can create any user.
+      // Uninitialized system bootstrap allows the first authenticated user to register as initial super_coordinator
+      allow create: if (
+        (isAuthenticated() && isSystemUninitialized() && isOwner(userId) && request.resource.data.role == 'super_coordinator') ||
+        isSuperCoordinator()
+      );
+
+      // Super Coordinator can update any user.
+      // Non-admins can only update non-sensitive profile info and CANNOT escalate roles or alter assignments
+      allow update: if isSuperCoordinator() || (
+        isOwner(userId) &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.assignedYear == resource.data.assignedYear &&
+        request.resource.data.active == resource.data.active
+      );
+
+      // Only Super Coordinator can delete users
+      allow delete: if isSuperCoordinator();
+    }
+
+    // ========================================================
+    // STUDENTS COLLECTION: students/{studentId}
+    // ========================================================
+    match /students/{studentId} {
+      // Super and View Coordinators can read all students.
+      // Year Coordinators can ONLY read students matching their assigned year scope.
+      allow read: if isSuperCoordinator() || isViewCoordinator() || (
+        isActiveUser() && (
+          matchesYearScope(resource.data.year) ||
+          (resource.data.academicYear is string && matchesYearScope(resource.data.academicYear))
+        )
+      );
+
+      // Master student database is strictly managed by Super Coordinator only
+      allow write: if isSuperCoordinator();
+    }
+
+    // ========================================================
+    // EVENTS COLLECTION: events/{eventId}
+    // ========================================================
+    match /events/{eventId} {
+      // All active authenticated coordinators can view events
+      allow read: if isAuthenticated() && isActiveUser();
+
+      // Only Super Coordinator can create or delete events
+      allow create, delete: if isSuperCoordinator();
+
+      // Updates: Super Coordinator can update anything.
+      // Year Coordinators can update participant lists/capacity summaries while event is open.
+      allow update: if isSuperCoordinator() || (
+        isActiveUser() && isYearCoordinator() && resource.data.status == 'open'
+      );
+    }
+
+    // ========================================================
+    // REGISTRATIONS COLLECTION: registrations/{registrationId}
+    // ========================================================
+    match /registrations/{registrationId} {
+      // Super and View Coordinators can read all registrations.
+      // Year Coordinators can ONLY read registrations within their assigned year.
+      allow read: if isSuperCoordinator() || isViewCoordinator() || (
+        isActiveUser() && matchesYearScope(resource.data.year)
+      );
+
+      // Creating registrations:
+      // Super Coordinator can create any registration.
+      // Year Coordinator can create ONLY within their assigned year scope,
+      // and event status must be 'open'.
+      allow create: if isSuperCoordinator() || (
+        isActiveUser() &&
+        matchesYearScope(request.resource.data.year) &&
+        get(/databases/$(database)/documents/events/$(request.resource.data.eventId)).data.status == 'open'
+      );
+
+      // Updating registrations:
+      // Super Coordinator can update any registration.
+      // Year Coordinator can only update registrations within their assigned scope,
+      // cannot alter year scope, and event must still be 'open'.
+      allow update: if isSuperCoordinator() || (
+        isActiveUser() &&
+        matchesYearScope(resource.data.year) &&
+        request.resource.data.year == resource.data.year &&
+        get(/databases/$(database)/documents/events/$(resource.data.eventId)).data.status == 'open'
+      );
+
+      // Deleting registrations: only Super Coordinator
+      allow delete: if isSuperCoordinator();
+    }
+
+    // ========================================================
+    // ACTIVITY LOGS COLLECTION: activityLogs/{logId}
+    // ========================================================
+    match /activityLogs/{logId} {
+      // Only Super Coordinator can inspect audit logs
+      allow read: if isSuperCoordinator();
+
+      // Any authenticated active user can append an audit entry for their own actions
+      allow create: if isAuthenticated() &&
+                       isActiveUser() &&
+                       request.resource.data.actorUid == request.auth.uid;
+
+      // Logs are immutable: no updates or deletions allowed
+      allow update, delete: if false;
+    }
+
+    // ========================================================
+    // SETTINGS COLLECTION: settings/{settingId}
+    // ========================================================
+    match /settings/{settingId} {
+      // Ordinary college/application settings are ONLY readable by authenticated active users.
+      // Unauthenticated users are strictly blocked.
+      allow read: if isAuthenticated() && isActiveUser();
+
+      // Super Coordinator can create or update settings.
+      // During initial bootstrap, the first authenticated user can also initialize default college settings.
+      allow create: if isSuperCoordinator() || (isSystemUninitialized() && isAuthenticated());
+
+      // Only Super Coordinator can modify settings thereafter
+      allow update: if isSuperCoordinator();
+
+      // Settings documents should never be deleted
+      allow delete: if false;
+    }
+
+    // ========================================================
+    // DEDICATED SYSTEM BOOTSTRAP STATUS: system/{docId}
+    // ========================================================
+    match /system/{docId} {
+      // ONLY the minimal 'status' document is publicly readable for bootstrap/setup detection.
+      // Exposes NO sensitive college information (only { isInitialized: true, initializedAt: ... }).
+      allow read: if docId == 'status';
+
+      // Can only be created once during initial bootstrap by an authenticated user when uninitialized,
+      // or by an active Super Coordinator
+      allow create: if docId == 'status' &&
+                       ((isAuthenticated() && isSystemUninitialized()) || isSuperCoordinator());
+
+      // System status is strictly immutable once initialized
+      allow update, delete: if false;
+    }
+
+    // Default deny all other paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
