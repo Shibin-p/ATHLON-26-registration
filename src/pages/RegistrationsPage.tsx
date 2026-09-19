@@ -35,6 +35,7 @@ import { EmptyState } from '../components/common/EmptyState';
 import { SkeletonTable } from '../components/common/Skeleton';
 import type { Registration, CollegeSettings } from '../types';
 import { normalizeAcademicYear, CANONICAL_YEARS } from '../utils/academicYear';
+import { sortStudentsByName } from '../utils/studentSort';
 
 export const RegistrationsPage: React.FC = () => {
   const { user, isSuperCoordinator, isYearCoordinator } = useAuth();
@@ -477,29 +478,35 @@ export const RegistrationsPage: React.FC = () => {
             </h3>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '240px', overflowY: 'auto', marginBottom: 'var(--space-5)' }}>
-              {viewingRegistration.participantsSnapshot?.map((s, idx) => (
-                <div
-                  key={s.studentId || idx}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '0.5rem 0.75rem',
-                    background: 'var(--bg-surface-elevated)',
-                    borderRadius: 'var(--radius-sm)',
-                    border: '1px solid var(--border-subtle)',
-                    fontSize: 'var(--text-xs)',
-                  }}
-                >
-                  <div>
-                    <strong style={{ color: 'var(--text-primary)' }}>{s.name}</strong>
-                    <span style={{ color: 'var(--text-tertiary)', marginLeft: '8px' }}>{s.registerNumber}</span>
+              {(() => {
+                const participants = viewingRegistration.participantsSnapshot || [];
+                const isRelay = viewingRegistration.registrationType === 'relay' && viewingRegistration.relayOrder && viewingRegistration.relayOrder.length > 0;
+                const displayParticipants = isRelay ? participants : sortStudentsByName(participants);
+
+                return displayParticipants.map((s, idx) => (
+                  <div
+                    key={s.studentId || idx}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '0.5rem 0.75rem',
+                      background: 'var(--bg-surface-elevated)',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '1px solid var(--border-subtle)',
+                      fontSize: 'var(--text-xs)',
+                    }}
+                  >
+                    <div>
+                      <strong style={{ color: 'var(--text-primary)' }}>{s.name}</strong>
+                      <span style={{ color: 'var(--text-tertiary)', marginLeft: '8px' }}>{s.registerNumber}</span>
+                    </div>
+                    <span className="badge" style={{ fontSize: '10px', background: 'var(--color-primary-light)', color: '#93c5fd' }}>
+                      {s.year} {s.class}
+                    </span>
                   </div>
-                  <span className="badge" style={{ fontSize: '10px', background: 'var(--color-primary-light)', color: '#93c5fd' }}>
-                    {s.year} {s.class}
-                  </span>
-                </div>
-              ))}
+                ));
+              })()}
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', flexWrap: 'wrap' }}>

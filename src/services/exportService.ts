@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { Registration, CollegeSettings } from '../types';
+import { sortStudentsByName } from '../utils/studentSort';
 
 /**
  * Download sample Excel template for student bulk import
@@ -33,10 +34,12 @@ export const exportRegistrationsToExcel = (
   filename: string = 'ATHLON26_Registrations.xlsx'
 ) => {
   const rows = registrations.map((reg, idx) => {
-    // Format participants
+    // Format participants (alphabetically sorted unless relay order applies)
     let participantsText = '';
     if (reg.participantsSnapshot && reg.participantsSnapshot.length > 0) {
-      participantsText = reg.participantsSnapshot
+      const isRelay = reg.registrationType === 'relay' && reg.relayOrder && reg.relayOrder.length > 0;
+      const sortedParticipants = isRelay ? reg.participantsSnapshot : sortStudentsByName(reg.participantsSnapshot);
+      participantsText = sortedParticipants
         .map((s) => `${s.name} (${s.registerNumber})`)
         .join(', ');
     } else {
@@ -149,7 +152,9 @@ export const exportRegistrationsToPDF = (
   const tableRows = registrations.map((r, i) => {
     let participantDesc = '';
     if (r.participantsSnapshot && r.participantsSnapshot.length > 0) {
-      participantDesc = r.participantsSnapshot
+      const isRelay = r.registrationType === 'relay' && r.relayOrder && r.relayOrder.length > 0;
+      const sortedParticipants = isRelay ? r.participantsSnapshot : sortStudentsByName(r.participantsSnapshot);
+      participantDesc = sortedParticipants
         .map((s) => `${s.name} (${s.registerNumber})`)
         .join(', ');
     } else {
@@ -290,7 +295,11 @@ export const exportSingleRegistrationPDF = (
   doc.setFont('helvetica', 'bold');
   doc.text('REGISTERED PARTICIPANTS ROSTER', 14, curY);
 
-  const participantRows = (reg.participantsSnapshot || []).map((p, i) => {
+  const rawParticipants = reg.participantsSnapshot || [];
+  const isRelay = reg.registrationType === 'relay' && reg.relayOrder && reg.relayOrder.length > 0;
+  const sortedParticipants = isRelay ? rawParticipants : sortStudentsByName(rawParticipants);
+
+  const participantRows = sortedParticipants.map((p, i) => {
     let roleText = 'Player';
     if (reg.registrationType === 'team' && p.studentId === reg.captainId) {
       roleText = 'Captain';
@@ -376,7 +385,7 @@ export const exportDetailedStudentsToExcel = (
       ? reg.createdAt.toDate().toLocaleString()
       : 'N/A';
 
-    const participants = reg.participantsSnapshot && reg.participantsSnapshot.length > 0
+    const rawParticipants = reg.participantsSnapshot && reg.participantsSnapshot.length > 0
       ? reg.participantsSnapshot
       : reg.participantIds.map((id) => ({
           studentId: id,
@@ -386,6 +395,9 @@ export const exportDetailedStudentsToExcel = (
           class: reg.class,
           department: reg.department,
         }));
+
+    const isRelay = reg.registrationType === 'relay' && reg.relayOrder && reg.relayOrder.length > 0;
+    const participants = isRelay ? rawParticipants : sortStudentsByName(rawParticipants);
 
     participants.forEach((p) => {
       let role = 'Player';
@@ -537,7 +549,7 @@ export const exportDetailedStudentsToPDF = (
   let counter = 1;
 
   filtered.forEach((reg) => {
-    const participants = reg.participantsSnapshot && reg.participantsSnapshot.length > 0
+    const rawParticipants = reg.participantsSnapshot && reg.participantsSnapshot.length > 0
       ? reg.participantsSnapshot
       : reg.participantIds.map((id) => ({
           studentId: id,
@@ -547,6 +559,9 @@ export const exportDetailedStudentsToPDF = (
           class: reg.class,
           department: reg.department,
         }));
+
+    const isRelay = reg.registrationType === 'relay' && reg.relayOrder && reg.relayOrder.length > 0;
+    const participants = isRelay ? rawParticipants : sortStudentsByName(rawParticipants);
 
     participants.forEach((p) => {
       let role = 'Player';

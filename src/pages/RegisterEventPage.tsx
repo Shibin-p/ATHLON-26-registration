@@ -25,6 +25,7 @@ import { recordActivity } from '../services/activityLogService';
 import { getCollegeSettings } from '../services/settingsService';
 import { exportSingleRegistrationPDF } from '../services/exportService';
 import { normalizeAcademicYear, isSameAcademicYear } from '../utils/academicYear';
+import { sortStudentsByName } from '../utils/studentSort';
 import type {
   Event,
   Student,
@@ -96,7 +97,7 @@ export const RegisterEventPage: React.FC = () => {
       } else {
         eligibleStudents = await getAllStudents();
       }
-      setStudents(eligibleStudents.filter((s) => s.active));
+      setStudents(sortStudentsByName(eligibleStudents.filter((s) => s.active)));
 
       // Check for existing registration
       let foundReg: Registration | null = null;
@@ -163,16 +164,18 @@ export const RegisterEventPage: React.FC = () => {
   const availableClasses = Array.from(new Set(students.map((s) => s.class))).filter(Boolean).sort();
   const availableDepts = Array.from(new Set(students.map((s) => s.department))).filter(Boolean).sort();
 
-  // Filter available students
-  const filteredStudents = students.filter((s) => {
-    const q = studentSearch.toLowerCase();
-    const matchesSearch =
-      s.name.toLowerCase().includes(q) ||
-      s.registerNumber.toLowerCase().includes(q);
-    const matchesClass = !classFilter || s.class === classFilter;
-    const matchesDept = !deptFilter || s.department === deptFilter;
-    return matchesSearch && matchesClass && matchesDept;
-  });
+  // Filter available students (alphabetically sorted)
+  const filteredStudents = sortStudentsByName(
+    students.filter((s) => {
+      const q = studentSearch.toLowerCase();
+      const matchesSearch =
+        s.name.toLowerCase().includes(q) ||
+        s.registerNumber.toLowerCase().includes(q);
+      const matchesClass = !classFilter || s.class === classFilter;
+      const matchesDept = !deptFilter || s.department === deptFilter;
+      return matchesSearch && matchesClass && matchesDept;
+    })
+  );
 
   // Toggle student selection
   const handleToggleStudent = (studentId: string) => {
@@ -757,14 +760,15 @@ export const RegisterEventPage: React.FC = () => {
                   onChange={(e) => setCaptainId(e.target.value)}
                 >
                   <option value="">Select captain from chosen players...</option>
-                  {selectedStudentIds.map((sId) => {
-                    const st = students.find((s) => s.studentId === sId);
-                    return (
-                      <option key={sId} value={sId}>
-                        {st?.name} ({st?.registerNumber} • {st?.class})
-                      </option>
-                    );
-                  })}
+                  {sortStudentsByName(
+                    selectedStudentIds
+                      .map((sId) => students.find((s) => s.studentId === sId))
+                      .filter((st): st is Student => Boolean(st))
+                  ).map((st) => (
+                    <option key={st.studentId} value={st.studentId}>
+                      {st.name} ({st.registerNumber} • {st.class})
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>

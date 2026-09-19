@@ -7,7 +7,7 @@ interface ConfirmModalProps {
   onClose?: () => void;
   onConfirm: () => void;
   title: string;
-  message: string;
+  message: React.ReactNode;
   confirmText?: string;
   cancelText?: string;
   isDangerous?: boolean;
@@ -69,9 +69,9 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
     <Modal isOpen={isOpen} onClose={handleCancel} title={title} maxWidth="460px">
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-start', marginBottom: 'var(--space-5)' }}>
         {renderIcon()}
-        <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', lineHeight: 1.5 }}>
+        <div style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', lineHeight: 1.5, flex: 1 }}>
           {message}
-        </p>
+        </div>
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-2)' }}>

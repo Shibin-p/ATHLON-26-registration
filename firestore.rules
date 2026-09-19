@@ -99,7 +99,8 @@ service cloud.firestore {
       );
 
       // Master student database is strictly managed by Super Coordinator only
-      allow write: if isSuperCoordinator();
+      // Year Coordinators, View Coordinators, and unauthenticated users have NO create, update, or delete permissions
+      allow create, update, delete: if isSuperCoordinator();
     }
 
     // ========================================================

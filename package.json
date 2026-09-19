@@ -12,6 +12,7 @@
   "dependencies": {
     "@dataconnect/generated": "file:src/dataconnect-generated",
     "firebase": "^12.19.0",
+    "firebase-admin": "^14.4.0",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
     "lucide-react": "^1.45.0",
@@ -25,6 +26,7 @@
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
+    "@vercel/node": "^13.0.1",
     "@vitejs/plugin-react": "^6.1.1",
     "oxlint": "^1.81.0",
     "typescript": "~6.0.2",

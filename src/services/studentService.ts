@@ -5,15 +5,17 @@ import {
   getDocs,
   setDoc,
   updateDoc,
+  deleteDoc,
   query,
   where,
   writeBatch,
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import type { Student } from '../types';
+import type { Student, Registration } from '../types';
 
 import { normalizeAcademicYear } from '../utils/academicYear';
+import { sortStudentsByName } from '../utils/studentSort';
 
 /**
  * Fetch all students
@@ -21,7 +23,7 @@ import { normalizeAcademicYear } from '../utils/academicYear';
 export const getAllStudents = async (): Promise<Student[]> => {
   const colRef = collection(db, 'students');
   const snapshot = await getDocs(colRef);
-  return snapshot.docs.map((d) => {
+  const mapped = snapshot.docs.map((d) => {
     const data = d.data();
     return {
       ...data,
@@ -29,6 +31,7 @@ export const getAllStudents = async (): Promise<Student[]> => {
       year: normalizeAcademicYear(data.year || data.academicYear),
     } as Student;
   });
+  return sortStudentsByName(mapped);
 };
 
 /**
@@ -75,7 +78,7 @@ export const getScopedStudents = async (
     }
   }
 
-  return results;
+  return sortStudentsByName(results);
 };
 
 /**
@@ -113,7 +116,7 @@ export const getStudentsByYear = async (year: string): Promise<Student[]> => {
     }
   }
 
-  return results;
+  return sortStudentsByName(results);
 };
 
 /**
@@ -221,6 +224,35 @@ export const toggleStudentStatus = async (
   updatedByUid: string
 ): Promise<void> => {
   await updateStudent(studentId, { active }, updatedByUid);
+};
+
+/**
+ * Check if a student is referenced in any event registration records.
+ * Returns the matching registration documents.
+ */
+export const checkStudentRegistrations = async (
+  studentId: string
+): Promise<Registration[]> => {
+  const colRef = collection(db, 'registrations');
+  const q = query(colRef, where('participantIds', 'array-contains', studentId));
+  const snap = await getDocs(q);
+  return snap.docs.map(
+    (d) =>
+      ({
+        ...d.data(),
+        registrationId: d.data().registrationId || d.id,
+        docId: d.id,
+      } as Registration)
+  );
+};
+
+/**
+ * Permanently delete a student record from the master database (Super Coordinator only).
+ * Callers should ensure checkStudentRegistrations has been run first to prevent orphaned records.
+ */
+export const deleteStudent = async (studentId: string): Promise<void> => {
+  const studentRef = doc(db, 'students', studentId);
+  await deleteDoc(studentRef);
 };
 
 /**

@@ -11,6 +11,7 @@ import {
   RotateCcw,
   ChevronLeft,
   ChevronRight,
+  Trash2,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -20,6 +21,8 @@ import {
   addStudent,
   updateStudent,
   toggleStudentStatus,
+  deleteStudent,
+  checkStudentRegistrations,
 } from '../services/studentService';
 import { recordActivity } from '../services/activityLogService';
 import { getCollegeSettings } from '../services/settingsService';
@@ -30,6 +33,7 @@ import { EmptyState } from '../components/common/EmptyState';
 import { SkeletonTable } from '../components/common/Skeleton';
 import type { Student, AcademicStructure } from '../types';
 import { CANONICAL_YEARS, normalizeAcademicYear, isSameAcademicYear } from '../utils/academicYear';
+import { sortStudentsByName, sortStudentsByRegisterNumber } from '../utils/studentSort';
 
 export const StudentsPage: React.FC = () => {
   const { user, isSuperCoordinator, isYearCoordinator } = useAuth();
@@ -71,6 +75,16 @@ export const StudentsPage: React.FC = () => {
 
   // Deactivate/Activate Confirm Modal
   const [confirmToggleStudent, setConfirmToggleStudent] = useState<Student | null>(null);
+
+  // Safe Delete Modal State (Super Coordinator Only)
+  const [deleteCandidate, setDeleteCandidate] = useState<Student | null>(null);
+  const [deleteHasRegistrations, setDeleteHasRegistrations] = useState<boolean>(false);
+  const [deleteRegistrationCount, setDeleteRegistrationCount] = useState<number>(0);
+  const [isCheckingRegistrations, setIsCheckingRegistrations] = useState<boolean>(false);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
+
+  // Global Sorting Option: Default Name (A-Z) vs Register Number
+  const [sortBy, setSortBy] = useState<'name' | 'registerNumber'>('name');
 
   useEffect(() => {
     loadStudentsAndStructure();
@@ -155,21 +169,28 @@ export const StudentsPage: React.FC = () => {
     return Array.from(deptsSet).sort();
   }, [students, selectedYear, academicStructure.departments]);
 
-  // Filter students
-  const filteredStudents = students.filter((s) => {
-    const q = searchTerm.toLowerCase();
-    const matchesSearch =
-      s.name.toLowerCase().includes(q) ||
-      s.registerNumber.toLowerCase().includes(q);
-    const matchesYear = !selectedYear || isSameAcademicYear(s.year, selectedYear);
-    const matchesClass = !selectedClass || s.class === selectedClass;
-    const matchesDept = !selectedDept || s.department === selectedDept;
-    const matchesStatus =
-      selectedStatus === 'all' ||
-      (selectedStatus === 'active' ? s.active : !s.active);
+  // Filter and sort students (Deterministic sorting)
+  const filteredStudents = useMemo(() => {
+    const list = students.filter((s) => {
+      const q = searchTerm.toLowerCase();
+      const matchesSearch =
+        s.name.toLowerCase().includes(q) ||
+        s.registerNumber.toLowerCase().includes(q);
+      const matchesYear = !selectedYear || isSameAcademicYear(s.year, selectedYear);
+      const matchesClass = !selectedClass || s.class === selectedClass;
+      const matchesDept = !selectedDept || s.department === selectedDept;
+      const matchesStatus =
+        selectedStatus === 'all' ||
+        (selectedStatus === 'active' ? s.active : !s.active);
 
-    return matchesSearch && matchesYear && matchesClass && matchesDept && matchesStatus;
-  });
+      return matchesSearch && matchesYear && matchesClass && matchesDept && matchesStatus;
+    });
+
+    if (sortBy === 'registerNumber') {
+      return sortStudentsByRegisterNumber(list);
+    }
+    return sortStudentsByName(list);
+  }, [students, searchTerm, selectedYear, selectedClass, selectedDept, selectedStatus, sortBy]);
 
   // Pagination calculation
   const totalPages = Math.ceil(filteredStudents.length / pageSize) || 1;
@@ -184,6 +205,7 @@ export const StudentsPage: React.FC = () => {
     setSelectedClass('');
     setSelectedDept('');
     setSelectedStatus('all');
+    setSortBy('name');
     setCurrentPage(1);
   };
 
@@ -320,6 +342,93 @@ export const StudentsPage: React.FC = () => {
     }
   };
 
+  const handleInitiateDelete = async (student: Student) => {
+    setIsCheckingRegistrations(true);
+    try {
+      const existingRegs = await checkStudentRegistrations(student.studentId);
+      setDeleteCandidate(student);
+      setDeleteHasRegistrations(existingRegs.length > 0);
+      setDeleteRegistrationCount(existingRegs.length);
+    } catch (err: any) {
+      showToast('Inspection Error', err.message || 'Failed to verify existing registrations.', 'error');
+    } finally {
+      setIsCheckingRegistrations(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteCandidate || !user) return;
+    setIsDeleting(true);
+    try {
+      if (deleteHasRegistrations) {
+        // Safe strategy: Deactivate student to preserve historical registration records
+        await toggleStudentStatus(deleteCandidate.studentId, false, user.uid);
+
+        await recordActivity(
+          'STUDENT_DEACTIVATED',
+          user.uid,
+          user.name,
+          user.role,
+          'student',
+          deleteCandidate.studentId,
+          {
+            studentName: deleteCandidate.name,
+            registerNumber: deleteCandidate.registerNumber,
+            studentId: deleteCandidate.studentId,
+            class: deleteCandidate.class,
+            academicYear: deleteCandidate.year,
+            details: `Deactivated student with ${deleteRegistrationCount} historical event registration(s): ${deleteCandidate.name} (${deleteCandidate.registerNumber})`,
+          }
+        );
+
+        showToast(
+          'Student Deactivated',
+          `${deleteCandidate.name} has been deactivated to preserve event registration history.`,
+          'info'
+        );
+
+        // Reactive local update
+        setStudents((prev) =>
+          prev.map((s) => (s.studentId === deleteCandidate.studentId ? { ...s, active: false } : s))
+        );
+      } else {
+        // Safe to permanently delete from database
+        await deleteStudent(deleteCandidate.studentId);
+
+        await recordActivity(
+          'STUDENT_DELETED',
+          user.uid,
+          user.name,
+          user.role,
+          'student',
+          deleteCandidate.studentId,
+          {
+            studentName: deleteCandidate.name,
+            registerNumber: deleteCandidate.registerNumber,
+            studentId: deleteCandidate.studentId,
+            class: deleteCandidate.class,
+            academicYear: deleteCandidate.year,
+            details: `Permanently removed student: ${deleteCandidate.name} (${deleteCandidate.registerNumber}) from ${deleteCandidate.year} ${deleteCandidate.class}`,
+          }
+        );
+
+        showToast(
+          'Student Deleted',
+          `${deleteCandidate.name} (${deleteCandidate.registerNumber}) was removed from the database.`,
+          'success'
+        );
+
+        // Reactive local update
+        setStudents((prev) => prev.filter((s) => s.studentId !== deleteCandidate.studentId));
+      }
+      setDeleteCandidate(null);
+    } catch (err: any) {
+      showToast('Delete Error', err.message || 'Failed to process student deletion.', 'error');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="page-container">
       {/* Page Header */}
@@ -438,7 +547,20 @@ export const StudentsPage: React.FC = () => {
             <option value="inactive">Inactive Only</option>
           </select>
 
-          {(searchTerm || selectedYear || selectedClass || selectedDept || selectedStatus !== 'all') && (
+          <select
+            className="filter-select"
+            value={sortBy}
+            onChange={(e) => {
+              setSortBy(e.target.value as any);
+              setCurrentPage(1);
+            }}
+            title="Order student list"
+          >
+            <option value="name">Sort: Name (A–Z)</option>
+            <option value="registerNumber">Sort: Register No</option>
+          </select>
+
+          {(searchTerm || selectedYear || selectedClass || selectedDept || selectedStatus !== 'all' || sortBy !== 'name') && (
             <button onClick={resetFilters} className="btn btn-ghost btn-sm">
               <RotateCcw size={13} /> Reset
             </button>
@@ -510,7 +632,7 @@ export const StudentsPage: React.FC = () => {
                     </td>
                     {isSuperCoordinator && (
                       <td style={{ textAlign: 'right' }}>
-                        <div style={{ display: 'inline-flex', gap: '4px' }}>
+                        <div style={{ display: 'inline-flex', gap: '4px', alignItems: 'center', whiteSpace: 'nowrap' }}>
                           <button
                             onClick={() => handleOpenEdit(st)}
                             className="btn btn-ghost btn-sm"
@@ -525,6 +647,15 @@ export const StudentsPage: React.FC = () => {
                             style={{ color: st.active ? '#f87171' : '#34d399' }}
                           >
                             {st.active ? <XCircle size={13} /> : <CheckCircle2 size={13} />}
+                          </button>
+                          <button
+                            onClick={() => handleInitiateDelete(st)}
+                            className="btn btn-ghost btn-sm"
+                            title="Delete Student"
+                            style={{ color: '#f87171' }}
+                            disabled={isCheckingRegistrations}
+                          >
+                            <Trash2 size={13} />
                           </button>
                         </div>
                       </td>
@@ -775,6 +906,67 @@ export const StudentsPage: React.FC = () => {
         type={confirmToggleStudent?.active ? 'danger' : 'info'}
         onConfirm={handleToggleStatus}
         onCancel={() => setConfirmToggleStudent(null)}
+      />
+
+      {/* Safe Delete / Deactivate Confirm Modal */}
+      <ConfirmModal
+        isOpen={!!deleteCandidate}
+        title={deleteHasRegistrations ? 'Student Has Existing Event Registrations' : 'Delete Student?'}
+        message={
+          deleteHasRegistrations ? (
+            <div>
+              <p style={{ marginBottom: '8px', color: '#fbbf24', fontWeight: 600 }}>
+                This student is referenced by {deleteRegistrationCount} existing registration record(s).
+              </p>
+              <div
+                style={{
+                  background: 'var(--bg-surface-elevated)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '8px 12px',
+                  marginBottom: '10px',
+                  fontSize: 'var(--text-xs)',
+                }}
+              >
+                <div><strong>Name:</strong> {deleteCandidate?.name}</div>
+                <div><strong>Register Number:</strong> {deleteCandidate?.registerNumber}</div>
+                <div><strong>Cohort / Class:</strong> {deleteCandidate?.year} {deleteCandidate?.class} ({deleteCandidate?.department})</div>
+              </div>
+              <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>
+                This student is referenced by existing registration records. Deactivating the student will preserve historical registration data.
+              </p>
+            </div>
+          ) : (
+            <div>
+              <p style={{ marginBottom: '8px' }}>
+                Are you sure you want to delete:
+              </p>
+              <div
+                style={{
+                  background: 'var(--bg-surface-elevated)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '8px 12px',
+                  marginBottom: '10px',
+                  fontSize: 'var(--text-xs)',
+                }}
+              >
+                <div><strong>Name:</strong> {deleteCandidate?.name}</div>
+                <div><strong>Register Number:</strong> {deleteCandidate?.registerNumber}</div>
+                <div><strong>Cohort / Class:</strong> {deleteCandidate?.year} {deleteCandidate?.class} ({deleteCandidate?.department})</div>
+              </div>
+              <p style={{ color: '#f87171', fontSize: 'var(--text-xs)', fontWeight: 500 }}>
+                This action will remove the student from the student database.
+              </p>
+            </div>
+          )
+        }
+        confirmText={deleteHasRegistrations ? 'Deactivate Student' : 'Delete Student'}
+        cancelText="Cancel"
+        type={deleteHasRegistrations ? 'warning' : 'danger'}
+        isLoading={isDeleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteCandidate(null)}
       />
     </div>
   );
