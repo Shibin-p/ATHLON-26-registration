@@ -17,7 +17,6 @@ export type CoordinatorRole = (typeof ALLOWED_COORDINATOR_ROLES)[number];
 
 export function isValidEmail(email: string): boolean {
   if (!email || typeof email !== 'string') return false;
-  // Standard email regex RFC 5322 compliant simplified
   const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return re.test(email.trim());
 }
@@ -56,6 +55,5 @@ export function validateAcademicYear(
     return { valid: true, academicYear: academicYear as CanonicalAcademicYear };
   }
 
-  // For super_coordinator or view_coordinator, academicYear is not applicable or null
   return { valid: true, academicYear: null };
 }

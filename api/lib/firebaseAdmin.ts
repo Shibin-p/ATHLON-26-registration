@@ -20,6 +20,15 @@ function getAdminApp(): App {
     );
   }
 
+  // Handle surrounding quotes if present in environment settings
+  privateKey = privateKey.trim();
+  if (
+    (privateKey.startsWith('"') && privateKey.endsWith('"')) ||
+    (privateKey.startsWith("'") && privateKey.endsWith("'"))
+  ) {
+    privateKey = privateKey.slice(1, -1);
+  }
+
   // Handle escaped newlines in the private key string
   if (privateKey.includes('\\n')) {
     privateKey = privateKey.replace(/\\n/g, '\n');

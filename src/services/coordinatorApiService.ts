@@ -51,6 +51,19 @@ async function getAuthHeaders(): Promise<HeadersInit> {
   };
 }
 
+async function parseResponsePayload(response: Response): Promise<any> {
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    try {
+      return await response.json();
+    } catch {
+      // In case json parsing fails, fallback to text
+    }
+  }
+  const text = await response.text();
+  return { error: text || `Server returned error status ${response.status}` };
+}
+
 /**
  * Call the secure server endpoint to create both a Firebase Authentication user
  * and an ATHLON'26 coordinator profile atomically.
@@ -66,7 +79,7 @@ export async function createCoordinatorAccount(
     body: JSON.stringify(data),
   });
 
-  const result = await response.json();
+  const result = await parseResponsePayload(response);
 
   if (!response.ok) {
     const error: any = new Error(result.error || 'Failed to create coordinator account');
@@ -103,7 +116,7 @@ export async function listAuthUsers(params?: {
     headers,
   });
 
-  const result = await response.json();
+  const result = await parseResponsePayload(response);
 
   if (!response.ok) {
     throw new Error(result.error || 'Failed to load Firebase Authentication users');
@@ -127,7 +140,7 @@ export async function assignExistingCoordinator(
     body: JSON.stringify(data),
   });
 
-  const result = await response.json();
+  const result = await parseResponsePayload(response);
 
   if (!response.ok) {
     const error: any = new Error(result.error || 'Failed to assign coordinator profile');

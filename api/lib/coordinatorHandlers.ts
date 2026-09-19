@@ -1,18 +1,18 @@
 import { IncomingMessage, ServerResponse } from 'http';
 import type { UserRecord } from 'firebase-admin/auth';
 import type { QueryDocumentSnapshot } from 'firebase-admin/firestore';
-import { adminAuth, adminDb } from '../firebaseAdmin.ts';
-import { verifySuperCoordinatorCaller } from '../authMiddleware.ts';
+import { adminAuth, adminDb } from './firebaseAdmin';
+import { verifySuperCoordinatorCaller } from './authMiddleware';
 import {
   isValidEmail,
   validatePassword,
   validateCoordinatorRole,
   validateAcademicYear,
-} from '../validators.ts';
+} from './validators';
 
 // Helper to parse JSON body from IncomingMessage
 export async function parseJsonBody<T>(req: IncomingMessage): Promise<T> {
-  // If Vite or body-parser already attached body
+  // If Vercel or body-parser already attached body
   if ((req as any).body) {
     if (typeof (req as any).body === 'string') {
       try {
@@ -145,9 +145,10 @@ export async function handleCreateCoordinator(req: IncomingMessage, res: ServerR
     // 3. Create Firestore user profile
     const now = new Date();
     const finalName = fullName.trim();
-    const finalYear = (roleValidation.role === 'year_coordinator' && yearValidation.academicYear)
-      ? yearValidation.academicYear
-      : null;
+    const finalYear =
+      roleValidation.role === 'year_coordinator' && yearValidation.academicYear
+        ? yearValidation.academicYear
+        : null;
 
     const coordinatorProfile: Record<string, any> = {
       uid: createdAuthUser.uid,
@@ -186,9 +187,11 @@ export async function handleCreateCoordinator(req: IncomingMessage, res: ServerR
       coordinator: {
         id: createdAuthUser.uid,
         uid: createdAuthUser.uid,
+        name: coordinatorProfile.name,
         fullName: coordinatorProfile.fullName,
         email: coordinatorProfile.email,
         role: coordinatorProfile.role,
+        assignedYear: coordinatorProfile.assignedYear || null,
         academicYear: coordinatorProfile.academicYear || null,
         active: true,
         createdAt: coordinatorProfile.createdAt,
@@ -233,17 +236,23 @@ export async function handleListAuthUsers(req: IncomingMessage, res: ServerRespo
   }
 
   try {
-    // Parse query params from URL
+    // Parse query params from Vercel req.query or fallback to URL
+    const queryObj = (req as any).query || {};
     const parsedUrl = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
-    const search = (parsedUrl.searchParams.get('search') || '').toLowerCase().trim();
-    const assignmentFilter = parsedUrl.searchParams.get('assignment') || 'all'; // 'all' | 'assigned' | 'unassigned'
-    const statusFilter = parsedUrl.searchParams.get('status') || 'all'; // 'all' | 'enabled' | 'disabled'
-    const pageToken = parsedUrl.searchParams.get('pageToken') || undefined;
-    const requestedLimit = parseInt(parsedUrl.searchParams.get('limit') || '50', 10);
-    const limit = Math.min(Math.max(requestedLimit, 10), 100);
+
+    const searchParam = queryObj.search ?? parsedUrl.searchParams.get('search') ?? '';
+    const search = String(searchParam).toLowerCase().trim();
+
+    const assignmentFilter = String(queryObj.assignment ?? parsedUrl.searchParams.get('assignment') ?? 'all');
+    const statusFilter = String(queryObj.status ?? parsedUrl.searchParams.get('status') ?? 'all');
+    const pageToken = queryObj.pageToken ?? parsedUrl.searchParams.get('pageToken') ?? undefined;
+
+    const limitParam = queryObj.limit ?? parsedUrl.searchParams.get('limit') ?? '50';
+    const requestedLimit = parseInt(String(limitParam), 10);
+    const limit = Math.min(Math.max(isNaN(requestedLimit) ? 50 : requestedLimit, 10), 100);
 
     // List users from Firebase Auth
-    const listUsersResult = await adminAuth.listUsers(limit, pageToken);
+    const listUsersResult = await adminAuth.listUsers(limit, pageToken ? String(pageToken) : undefined);
 
     // Fetch all existing ATHLON 26 user profiles from Firestore
     const usersSnapshot = await adminDb.collection('users').get();
@@ -265,9 +274,9 @@ export async function handleListAuthUsers(req: IncomingMessage, res: ServerRespo
         isAssigned: !!profile,
         profile: profile
           ? {
-              fullName: profile.fullName || user.displayName || '',
+              fullName: profile.name || profile.fullName || user.displayName || '',
               role: profile.role || '',
-              academicYear: profile.academicYear || null,
+              academicYear: profile.assignedYear || profile.academicYear || null,
               active: profile.active !== false,
             }
           : null,
@@ -369,9 +378,10 @@ export async function handleAssignCoordinator(req: IncomingMessage, res: ServerR
     // 4. Create coordinator profile
     const now = new Date();
     const finalFullName = (fullName || authUser.displayName || authUser.email || 'Coordinator').trim();
-    const finalYear = (roleValidation.role === 'year_coordinator' && yearValidation.academicYear)
-      ? yearValidation.academicYear
-      : null;
+    const finalYear =
+      roleValidation.role === 'year_coordinator' && yearValidation.academicYear
+        ? yearValidation.academicYear
+        : null;
 
     const coordinatorProfile: Record<string, any> = {
       uid: uid.trim(),
@@ -403,9 +413,11 @@ export async function handleAssignCoordinator(req: IncomingMessage, res: ServerR
       coordinator: {
         id: uid.trim(),
         uid: uid.trim(),
+        name: coordinatorProfile.name,
         fullName: coordinatorProfile.fullName,
         email: coordinatorProfile.email,
         role: coordinatorProfile.role,
+        assignedYear: coordinatorProfile.assignedYear || null,
         academicYear: coordinatorProfile.academicYear || null,
         active: true,
         createdAt: coordinatorProfile.createdAt,

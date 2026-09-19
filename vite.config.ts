@@ -15,16 +15,16 @@ function apiDevServerPlugin(): Plugin {
         try {
           const pathname = url.split('?')[0];
           if (pathname === '/api/coordinators/create') {
-            const { handleCreateCoordinator } = await import('./api/_lib/handlers/coordinatorHandlers.ts');
-            return await handleCreateCoordinator(req, res);
+            const mod = await server.ssrLoadModule('./api/coordinators/create.ts');
+            return await mod.default(req, res);
           }
           if (pathname === '/api/coordinators/list-auth-users') {
-            const { handleListAuthUsers } = await import('./api/_lib/handlers/coordinatorHandlers.ts');
-            return await handleListAuthUsers(req, res);
+            const mod = await server.ssrLoadModule('./api/coordinators/list-auth-users.ts');
+            return await mod.default(req, res);
           }
           if (pathname === '/api/coordinators/assign') {
-            const { handleAssignCoordinator } = await import('./api/_lib/handlers/coordinatorHandlers.ts');
-            return await handleAssignCoordinator(req, res);
+            const mod = await server.ssrLoadModule('./api/coordinators/assign.ts');
+            return await mod.default(req, res);
           }
           next();
         } catch (err: any) {

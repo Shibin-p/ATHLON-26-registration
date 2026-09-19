@@ -1,5 +1,5 @@
 import { IncomingMessage } from 'http';
-import { adminAuth, adminDb } from './firebaseAdmin.ts';
+import { adminAuth, adminDb } from './firebaseAdmin';
 
 export interface AuthenticatedCaller {
   uid: string;
