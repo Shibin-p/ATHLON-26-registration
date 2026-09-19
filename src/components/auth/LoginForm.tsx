@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { LogIn, AlertCircle, KeyRound, Mail, Info, ShieldCheck, Trophy } from 'lucide-react';
+import { LogIn, AlertCircle, KeyRound, Mail, Info, ShieldCheck, Trophy, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 export const LoginForm: React.FC = () => {
   const { login, loading, error: authError, isConfigured, canBootstrap } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -115,12 +116,12 @@ export const LoginForm: React.FC = () => {
           <label className="form-label" htmlFor="password-input">
             Password
           </label>
-          <div style={{ position: 'relative' }}>
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
             <input
               id="password-input"
-              type="password"
+              type={showPassword ? 'text' : 'password'}
               className="form-input"
-              style={{ paddingLeft: '2.4rem' }}
+              style={{ paddingLeft: '2.4rem', paddingRight: '2.5rem' }}
               placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -135,8 +136,36 @@ export const LoginForm: React.FC = () => {
                 top: '50%',
                 transform: 'translateY(-50%)',
                 color: 'var(--text-tertiary)',
+                pointerEvents: 'none',
               }}
             />
+            <button
+              type="button"
+              id="toggle-password-visibility-btn"
+              onClick={() => setShowPassword((prev) => !prev)}
+              style={{
+                position: 'absolute',
+                right: '0.75rem',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'none',
+                border: 'none',
+                color: 'var(--text-tertiary)',
+                cursor: 'pointer',
+                padding: '4px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 'var(--radius-sm, 4px)',
+                transition: 'color 0.15s ease',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-tertiary)')}
+              title={showPassword ? 'Hide password' : 'Show password'}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+            >
+              {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+            </button>
           </div>
         </div>
 

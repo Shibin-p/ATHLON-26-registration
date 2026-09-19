@@ -10,6 +10,8 @@ import {
   ArrowRight,
   Lock,
   Check,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { isSystemInitialized } from '../services/userService';
@@ -31,6 +33,7 @@ export const SetupPage: React.FC = () => {
   // Step 1: Sign-in inputs (if not logged in)
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
 
   // Step 2: Bootstrap inputs (if logged in)
@@ -295,12 +298,12 @@ export const SetupPage: React.FC = () => {
                 <label className="form-label" htmlFor="setup-password">
                   Account Password *
                 </label>
-                <div style={{ position: 'relative' }}>
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                   <input
                     id="setup-password"
-                    type="password"
+                    type={showLoginPassword ? 'text' : 'password'}
                     className="form-input"
-                    style={{ paddingLeft: '2.4rem' }}
+                    style={{ paddingLeft: '2.4rem', paddingRight: '2.5rem' }}
                     placeholder="••••••••"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
@@ -315,8 +318,35 @@ export const SetupPage: React.FC = () => {
                       top: '50%',
                       transform: 'translateY(-50%)',
                       color: 'var(--text-tertiary)',
+                      pointerEvents: 'none',
                     }}
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginPassword((prev) => !prev)}
+                    style={{
+                      position: 'absolute',
+                      right: '0.75rem',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--text-tertiary)',
+                      cursor: 'pointer',
+                      padding: '4px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: 'var(--radius-sm, 4px)',
+                      transition: 'color 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-tertiary)')}
+                    title={showLoginPassword ? 'Hide password' : 'Show password'}
+                    aria-label={showLoginPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showLoginPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
                 </div>
               </div>
 
