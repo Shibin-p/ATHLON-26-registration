@@ -420,10 +420,18 @@ export const submitRegistrationWithTransaction = async (params: {
       }
     }
 
-    // 7. Validate Student Documents: active status and academic year scope
-    for (const pid of participantIds) {
-      const studentRef = doc(db, 'students', pid);
-      const studentSnap = await transaction.get(studentRef);
+    // 2. Read coordinator inside transaction before any writes
+    const coordRef = doc(db, 'users', coordinatorId);
+    const coordSnap = await transaction.get(coordRef);
+
+    // 3. Read all student docs inside transaction before any writes
+    const studentRefs = participantIds.map((pid) => doc(db, 'students', pid));
+    const studentSnaps = await Promise.all(studentRefs.map((ref) => transaction.get(ref)));
+
+    // 4. Validate Student Documents: active status and academic year scope
+    for (let i = 0; i < participantIds.length; i++) {
+      const pid = participantIds[i];
+      const studentSnap = studentSnaps[i];
       if (!studentSnap.exists()) {
         throw new Error(`Student record "${pid}" not found in database.`);
       }
@@ -437,16 +445,9 @@ export const submitRegistrationWithTransaction = async (params: {
           `Security violation: Student "${studentData.name}" belongs to "${studentData.year || studentYear}", but this registration is scoped to "${canonicalYear}". Cross-year registration is rejected.`
         );
       }
-
-      // Concurrency touch to ensure atomic OCC serialization
-      transaction.update(studentRef, {
-        lastRegistrationAt: serverTimestamp(),
-      });
     }
 
-    // 8. Validate Coordinator Authority
-    const coordRef = doc(db, 'users', coordinatorId);
-    const coordSnap = await transaction.get(coordRef);
+    // 5. Validate Coordinator Authority
     if (coordSnap.exists()) {
       const coordData = coordSnap.data();
       if (
@@ -457,6 +458,15 @@ export const submitRegistrationWithTransaction = async (params: {
           `Authorization failed: Coordinator "${coordinatorName}" is assigned to "${coordData.assignedYear}" and cannot register for "${canonicalYear}".`
         );
       }
+    }
+
+    // === ALL WRITES OCCUR HERE (AFTER ALL READS) ===
+
+    // 6. Concurrency touch to ensure atomic OCC serialization
+    for (const studentRef of studentRefs) {
+      transaction.update(studentRef, {
+        lastRegistrationAt: serverTimestamp(),
+      });
     }
 
     // 9. Prepare new registration record
@@ -669,10 +679,14 @@ export const updateRegistrationWithTransaction = async (params: {
       }
     }
 
+    // 2. Read all student docs inside transaction before any writes
+    const studentRefs = participantIds.map((pid) => doc(db, 'students', pid));
+    const studentSnaps = await Promise.all(studentRefs.map((ref) => transaction.get(ref)));
+
     // 4. Validate Student Documents: active status and academic year scope
-    for (const pid of participantIds) {
-      const studentRef = doc(db, 'students', pid);
-      const studentSnap = await transaction.get(studentRef);
+    for (let i = 0; i < participantIds.length; i++) {
+      const pid = participantIds[i];
+      const studentSnap = studentSnaps[i];
       if (!studentSnap.exists()) {
         throw new Error(`Student record "${pid}" not found in database.`);
       }
@@ -686,11 +700,6 @@ export const updateRegistrationWithTransaction = async (params: {
           `Security violation: Student "${studentData.name}" belongs to "${studentData.year || studentYear}", but this registration is scoped to "${canonicalYear}".`
         );
       }
-
-      // Concurrency touch
-      transaction.update(studentRef, {
-        lastRegistrationAt: serverTimestamp(),
-      });
     }
 
     // 5. Duplicate student check across other teams
@@ -729,6 +738,13 @@ export const updateRegistrationWithTransaction = async (params: {
     }
     if (relayOrder || reg.relayOrder) {
       rawUpdates.relayOrder = relayOrder || reg.relayOrder;
+    }
+
+    // 6. Concurrency touch on all student records (Write phase)
+    for (const studentRef of studentRefs) {
+      transaction.update(studentRef, {
+        lastRegistrationAt: serverTimestamp(),
+      });
     }
 
     const cleanUpdates = removeUndefined(rawUpdates);
