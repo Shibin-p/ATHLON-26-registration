@@ -43,11 +43,43 @@ service cloud.firestore {
     }
 
     // 4. Scope helper for Year Coordinator
+    function getCoordinatorAssignedYear() {
+      return ('assignedYear' in getUserDoc() && getUserDoc().assignedYear is string)
+        ? getUserDoc().assignedYear
+        : (('academicYear' in getUserDoc() && getUserDoc().academicYear is string)
+            ? getUserDoc().academicYear
+            : '');
+    }
+
+    function isSameCohort(yearA, yearB) {
+      return yearA == yearB ||
+        (yearA is string && yearB is string && (
+          yearA.upper() == yearB.upper() ||
+          // 4th year matches 4th year, s7, s8, 4, fourth
+          ((yearA.upper() == '4TH YEAR' || yearA.upper() == '4TH' || yearA.upper() == 'S7' || yearA.upper() == 'S8' || yearA.upper() == '4' || yearA.upper() == 'FOURTH YEAR') &&
+           (yearB.upper() == '4TH YEAR' || yearB.upper() == '4TH' || yearB.upper() == 'S7' || yearB.upper() == 'S8' || yearB.upper() == '4' || yearB.upper() == 'FOURTH YEAR')) ||
+          // 3rd year matches 3rd year, s5, s6, 3, third
+          ((yearA.upper() == '3RD YEAR' || yearA.upper() == '3RD' || yearA.upper() == 'S5' || yearA.upper() == 'S6' || yearA.upper() == '3' || yearA.upper() == 'THIRD YEAR') &&
+           (yearB.upper() == '3RD YEAR' || yearB.upper() == '3RD' || yearB.upper() == 'S5' || yearB.upper() == 'S6' || yearB.upper() == '3' || yearB.upper() == 'THIRD YEAR')) ||
+          // 2nd year matches 2nd year, s3, s4, 2, second
+          ((yearA.upper() == '2ND YEAR' || yearA.upper() == '2ND' || yearA.upper() == 'S3' || yearA.upper() == 'S4' || yearA.upper() == '2' || yearA.upper() == 'SECOND YEAR') &&
+           (yearB.upper() == '2ND YEAR' || yearB.upper() == '2ND' || yearB.upper() == 'S3' || yearB.upper() == 'S4' || yearB.upper() == '2' || yearB.upper() == 'SECOND YEAR')) ||
+          // 1st year matches 1st year, s1, s2, 1, first
+          ((yearA.upper() == '1ST YEAR' || yearA.upper() == '1ST' || yearA.upper() == 'S1' || yearA.upper() == 'S2' || yearA.upper() == '1' || yearA.upper() == 'FIRST YEAR') &&
+           (yearB.upper() == '1ST YEAR' || yearB.upper() == '1ST' || yearB.upper() == 'S1' || yearB.upper() == 'S2' || yearB.upper() == '1' || yearB.upper() == 'FIRST YEAR'))
+        ));
+    }
+
     function matchesYearScope(year) {
-      return isYearCoordinator() && (
-        getUserDoc().assignedYear == year ||
-        (getUserDoc().assignedYear is string && year is string && getUserDoc().assignedYear.upper() == year.upper())
-      );
+      return isYearCoordinator() && isSameCohort(getCoordinatorAssignedYear(), year);
+    }
+
+    function isEventOpen(eventDoc) {
+      return !('status' in eventDoc) ||
+        eventDoc.status == 'open' ||
+        eventDoc.status == 'Open' ||
+        eventDoc.status == 'OPEN' ||
+        (eventDoc.status is string && eventDoc.status.lower() == 'open');
     }
 
     // 5. Initial System Bootstrap check
@@ -94,7 +126,7 @@ service cloud.firestore {
       allow read: if isSuperCoordinator() || isViewCoordinator() || (
         isActiveUser() && (
           matchesYearScope(resource.data.year) ||
-          (resource.data.academicYear is string && matchesYearScope(resource.data.academicYear))
+          ('academicYear' in resource.data && matchesYearScope(resource.data.academicYear))
         )
       );
 
@@ -120,7 +152,7 @@ service cloud.firestore {
       // Updates: Super Coordinator can update anything.
       // Year Coordinators can update participant lists/capacity summaries while event is open.
       allow update: if isSuperCoordinator() || (
-        isActiveUser() && isYearCoordinator() && resource.data.status == 'open'
+        isActiveUser() && isYearCoordinator() && isEventOpen(resource.data)
       );
     }
 
@@ -131,7 +163,10 @@ service cloud.firestore {
       // Super and View Coordinators can read all registrations.
       // Year Coordinators can ONLY read registrations within their assigned year.
       allow read: if isSuperCoordinator() || isViewCoordinator() || (
-        isActiveUser() && matchesYearScope(resource.data.year)
+        isActiveUser() && (
+          matchesYearScope(resource.data.year) ||
+          ('academicYear' in resource.data && matchesYearScope(resource.data.academicYear))
+        )
       );
 
       // Creating registrations:
@@ -140,8 +175,11 @@ service cloud.firestore {
       // and event status must be 'open'.
       allow create: if isSuperCoordinator() || (
         isActiveUser() &&
-        matchesYearScope(request.resource.data.year) &&
-        get(/databases/$(database)/documents/events/$(request.resource.data.eventId)).data.status == 'open'
+        (
+          matchesYearScope(request.resource.data.year) ||
+          ('academicYear' in request.resource.data && matchesYearScope(request.resource.data.academicYear))
+        ) &&
+        isEventOpen(get(/databases/$(database)/documents/events/$(request.resource.data.eventId)).data)
       );
 
       // Updating registrations:
@@ -150,9 +188,17 @@ service cloud.firestore {
       // cannot alter year scope, and event must still be 'open'.
       allow update: if isSuperCoordinator() || (
         isActiveUser() &&
-        matchesYearScope(resource.data.year) &&
-        request.resource.data.year == resource.data.year &&
-        get(/databases/$(database)/documents/events/$(resource.data.eventId)).data.status == 'open'
+        (
+          matchesYearScope(resource.data.year) ||
+          ('academicYear' in resource.data && matchesYearScope(resource.data.academicYear))
+        ) &&
+        (
+          !('year' in request.resource.data) ||
+          !('year' in resource.data) ||
+          request.resource.data.year == resource.data.year ||
+          isSameCohort(request.resource.data.year, resource.data.year)
+        ) &&
+        isEventOpen(get(/databases/$(database)/documents/events/$(resource.data.eventId)).data)
       );
 
       // Deleting registrations: only Super Coordinator
