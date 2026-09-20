@@ -19,13 +19,13 @@ import {
   isEventRegistrationOpen,
   isYearEligible,
 } from '../services/eventService';
-import { getScopedStudents, getAllStudents } from '../services/studentService';
+import { getScopedStudents } from '../services/studentService';
 import {
   submitRegistrationWithTransaction,
   updateRegistrationWithTransaction,
   getEventRegistrationForYear,
   getRegistrationById,
-  getAllRegistrations,
+  getScopedRegistrations,
 } from '../services/registrationService';
 import { recordActivity } from '../services/activityLogService';
 import {
@@ -39,7 +39,11 @@ import {
   calculateParticipationFromRegistrations,
 } from '../services/participationService';
 import { exportSingleRegistrationPDF } from '../services/exportService';
-import { normalizeAcademicYear, isSameAcademicYear } from '../utils/academicYear';
+import {
+  normalizeAcademicYear,
+  isSameAcademicYear,
+  CANONICAL_YEARS,
+} from '../utils/academicYear';
 import { sortStudentsByName } from '../utils/studentSort';
 import type {
   Event,
@@ -60,7 +64,12 @@ export const RegisterEventPage: React.FC = () => {
   const [settings, setSettings] = useState<CollegeSettings | null>(null);
   const [participationMap, setParticipationMap] = useState<Record<string, { games: number; athletics: number }>>({});
   const [loading, setLoading] = useState<boolean>(true);
+  const [loadingState, setLoadingState] = useState<string>('Preparing registration portal...');
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  // Resolved Academic Year for this registration context (Never defaults to 1ST YEAR while loading)
+  const [resolvedYear, setResolvedYear] = useState<string | null>(null);
 
   // Existing registration state (if year already registered or editing)
   const [existingRegistration, setExistingRegistration] = useState<Registration | null>(null);
@@ -70,9 +79,6 @@ export const RegisterEventPage: React.FC = () => {
   const [studentSearch, setStudentSearch] = useState('');
   const [classFilter, setClassFilter] = useState('');
   const [deptFilter, setDeptFilter] = useState('');
-
-  // Selected Scope
-  const assignedYear = user?.assignedYear ? normalizeAcademicYear(user.assignedYear) : '1ST YEAR';
 
   // Form State: Individual & Team
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
@@ -96,91 +102,202 @@ export const RegisterEventPage: React.FC = () => {
     }
   }, [eventId, registrationId, user]);
 
-  const loadData = async (id: string, editRegId?: string) => {
+  const loadData = async (id: string, editRegId?: string, overrideYear?: string) => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const [evt, colSettings, allEventsList, allRegsList] = await Promise.all([
-        getEventById(id),
-        getCollegeSettings(),
-        getAllEvents(),
-        getAllRegistrations(),
-      ]);
-
-      if (!evt) {
-        showToast('Event Not Found', 'Could not locate event details.', 'error');
-        navigate('/events');
-        return;
-      }
-
-      setEvent(evt);
-      setSettings(colSettings);
-
-      // Load eligible students for the coordinator
-      let eligibleStudents: Student[] = [];
-      if (isYearCoordinator && user?.assignedYear) {
-        const canonicalAssigned = normalizeAcademicYear(user.assignedYear);
-        eligibleStudents = await getScopedStudents(canonicalAssigned);
-      } else {
-        eligibleStudents = await getAllStudents();
-      }
-      setStudents(sortStudentsByName(eligibleStudents.filter((s) => s.active)));
-
-      // Check for existing registration
-      let foundReg: Registration | null = null;
       if (editRegId) {
-        foundReg = await getRegistrationById(editRegId, isYearCoordinator ? user?.assignedYear : undefined);
+        // ==========================================
+        // EDIT REGISTRATION WORKFLOW
+        // ==========================================
         setIsEditMode(true);
-      }
-      if (!foundReg && isYearCoordinator && user?.assignedYear) {
-        foundReg = await getEventRegistrationForYear(id, user.assignedYear);
-        if (foundReg && editRegId) {
-          setIsEditMode(true);
-        }
-      }
+        setLoadingState('Loading registration...');
 
-      if (foundReg && foundReg.status === 'registered') {
+        // 1. Fetch the actual registration document
+        const targetScope = isYearCoordinator ? user?.assignedYear : undefined;
+        let foundReg: Registration | null = null;
+        try {
+          foundReg = await getRegistrationById(editRegId, targetScope);
+        } catch (err: any) {
+          console.error('Failed to load registration:', err);
+        }
+
+        // 2. Verify registration exists
+        if (!foundReg) {
+          setLoadError('Registration not found.');
+          setLoading(false);
+          return;
+        }
+
+        // 3. Resolve the registration's academic year
+        const targetYear = normalizeAcademicYear(foundReg.year);
+        if (!targetYear) {
+          setLoadError('Unable to resolve academic year for this registration.');
+          setLoading(false);
+          return;
+        }
+
+        // 4. Validate Year Coordinator authorization
+        if (isYearCoordinator && user?.assignedYear) {
+          const userAssigned = normalizeAcademicYear(user.assignedYear);
+          if (!isSameAcademicYear(targetYear, userAssigned)) {
+            setLoadError('You are not authorized to edit registrations for this academic year.');
+            setLoading(false);
+            return;
+          }
+        }
+
+        // 5. Fetch event details & verify registration belongs to event
+        const evt = await getEventById(id);
+        if (!evt) {
+          setLoadError('Competition event not found.');
+          setLoading(false);
+          return;
+        }
+        if (foundReg.eventId && foundReg.eventId !== id && foundReg.eventId !== evt.eventId) {
+          setLoadError('This registration does not belong to the selected event.');
+          setLoading(false);
+          return;
+        }
+
+        // 6. Set resolved year and update UI loading status
+        setResolvedYear(targetYear);
+        setLoadingState(`Loading ${targetYear} students...`);
+
+        // 7. Load students, settings, cohort registrations, and events list
+        const [colSettings, eligibleStudents, cohortRegs, allEventsList] = await Promise.all([
+          getCollegeSettings(),
+          getScopedStudents(targetYear),
+          getScopedRegistrations(targetYear),
+          getAllEvents(),
+        ]);
+
+        setEvent(evt);
+        setSettings(colSettings);
+        setStudents(sortStudentsByName(eligibleStudents.filter((s) => s.active)));
         setExistingRegistration(foundReg);
-        // If in edit mode, pre-populate form
-        if (editRegId || isEditMode) {
-          setSelectedStudentIds(foundReg.participantIds || []);
-          setTeamName(foundReg.teamName || '');
-          setCaptainId(foundReg.captainId || '');
-        }
-      }
 
-      // Build live participation map across events
-      const eventsMap = new Map(allEventsList.map((e) => [e.eventId, e]));
-      const activeExcludeId = editRegId || foundReg?.registrationId || foundReg?.docId;
-      const pMap = calculateParticipationFromRegistrations(allRegsList, eventsMap, activeExcludeId);
-      setParticipationMap(pMap);
+        // Pre-populate form values from existing registration
+        setSelectedStudentIds(foundReg.participantIds || []);
+        setTeamName(foundReg.teamName || '');
+        setCaptainId(foundReg.captainId || '');
+
+        // Build live participation map excluding this registration being edited
+        const eventsMap = new Map(allEventsList.map((e) => [e.eventId, e]));
+        const activeExcludeId = foundReg.docId || foundReg.registrationId || editRegId;
+        const pMap = calculateParticipationFromRegistrations(cohortRegs, eventsMap, activeExcludeId);
+        setParticipationMap(pMap);
+      } else {
+        // ==========================================
+        // CREATE NEW REGISTRATION WORKFLOW
+        // ==========================================
+        setIsEditMode(false);
+        setLoadingState('Loading event details...');
+
+        const [evt, colSettings, allEventsList] = await Promise.all([
+          getEventById(id),
+          getCollegeSettings(),
+          getAllEvents(),
+        ]);
+
+        if (!evt) {
+          setLoadError('Competition event not found.');
+          setLoading(false);
+          return;
+        }
+
+        // Determine target year
+        let targetYear: string;
+        if (isYearCoordinator && user?.assignedYear) {
+          targetYear = normalizeAcademicYear(user.assignedYear);
+        } else if (overrideYear) {
+          targetYear = normalizeAcademicYear(overrideYear);
+        } else {
+          // Super coordinator defaults to first eligible year or 1ST YEAR
+          const firstEligible = CANONICAL_YEARS.find((y) => isYearEligible(evt, y));
+          targetYear = firstEligible || '1ST YEAR';
+        }
+
+        setResolvedYear(targetYear);
+        setLoadingState(`Loading ${targetYear} students...`);
+
+        const [eligibleStudents, cohortRegs, existingYearReg] = await Promise.all([
+          getScopedStudents(targetYear),
+          getScopedRegistrations(targetYear),
+          getEventRegistrationForYear(id, targetYear),
+        ]);
+
+        setEvent(evt);
+        setSettings(colSettings);
+        setStudents(sortStudentsByName(eligibleStudents.filter((s) => s.active)));
+        setExistingRegistration(existingYearReg && existingYearReg.status === 'registered' ? existingYearReg : null);
+        setSelectedStudentIds([]);
+        setTeamName('');
+        setCaptainId('');
+
+        const eventsMap = new Map(allEventsList.map((e) => [e.eventId, e]));
+        const pMap = calculateParticipationFromRegistrations(cohortRegs, eventsMap);
+        setParticipationMap(pMap);
+      }
     } catch (err: any) {
-      showToast('Error', err.message || 'Failed to initialize registration.', 'error');
+      console.error('Failed to initialize registration:', err);
+      setLoadError(err.message || 'Unable to load registration.');
     } finally {
       setLoading(false);
     }
   };
 
+  const handleYearChange = (newYear: string) => {
+    if (!eventId || isEditMode) return;
+    loadData(eventId, undefined, newYear);
+  };
+
   const handleStartEditing = () => {
-    if (!existingRegistration) return;
-    setIsEditMode(true);
-    setSelectedStudentIds(existingRegistration.participantIds || []);
-    setTeamName(existingRegistration.teamName || '');
-    setCaptainId(existingRegistration.captainId || '');
+    if (!existingRegistration || !eventId) return;
+    navigate(`/events/${eventId}/edit-registration/${existingRegistration.docId || existingRegistration.registrationId}`);
   };
 
   if (loading) {
     return (
       <div className="page-container" style={{ textAlign: 'center', padding: 'var(--space-8) 0' }}>
         <div className="spinner" style={{ margin: '0 auto var(--space-4)', width: 28, height: 28 }} />
-        <p style={{ color: 'var(--text-secondary)' }}>Preparing registration portal...</p>
+        <p style={{ color: 'var(--text-secondary)' }}>{loadingState}</p>
       </div>
     );
   }
 
-  if (!event) return null;
+  if (loadError) {
+    return (
+      <div className="page-container" style={{ maxWidth: '600px', margin: 'var(--space-8) auto', textAlign: 'center' }}>
+        <div className="card" style={{ padding: 'var(--space-8) var(--space-6)' }}>
+          <div style={{ color: '#f87171', marginBottom: 'var(--space-4)' }}>
+            <AlertTriangle size={44} style={{ margin: '0 auto' }} />
+          </div>
+          <h2 style={{ fontSize: 'var(--text-xl)', color: 'var(--text-primary)', marginBottom: '8px' }}>
+            {loadError}
+          </h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-6)' }}>
+            Please verify your registration link or check coordinator privileges.
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <Link to="/registrations" className="btn btn-primary btn-md">
+              View Registrations
+            </Link>
+            {eventId && (
+              <Link to={`/events/${eventId}`} className="btn btn-secondary btn-md">
+                Back to Event
+              </Link>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!event || !resolvedYear) return null;
 
   const { isOpen, reason } = isEventRegistrationOpen(event);
-  const eligible = !assignedYear || isYearEligible(event, assignedYear);
+  const eligible = isYearEligible(event, resolvedYear);
 
   // Other registered student IDs in the event (excluding currently edited registration)
   const registeredIdsExcludingSelf = new Set<string>(
@@ -218,9 +335,6 @@ export const RegisterEventPage: React.FC = () => {
   const handleToggleStudent = (studentId: string) => {
     if (registeredIdsExcludingSelf.has(studentId)) return;
 
-    const limits = getParticipationLimits(settings);
-    const isCurrentEventGame = isGameEvent(event?.category);
-    const isCurrentEventAthletic = isAthleticsEvent(event?.category);
     const usage = participationMap[studentId] || { games: 0, athletics: 0 };
     const stObj = students.find((s) => s.studentId === studentId);
     const studentName = stObj?.name || 'Student';
@@ -250,7 +364,7 @@ export const RegisterEventPage: React.FC = () => {
       if (selectedStudentIds.length >= maxAllowed) {
         showToast(
           'Capacity Limit',
-          `Cannot exceed maximum quota of ${maxAllowed} participant(s) per year for ${assignedYear}.`,
+          `Cannot exceed maximum quota of ${maxAllowed} participant(s) per year for ${resolvedYear}.`,
           'warning'
         );
         return;
@@ -272,7 +386,7 @@ export const RegisterEventPage: React.FC = () => {
       return;
     }
     if (!eligible) {
-      showToast('Ineligible', `${assignedYear} is not eligible for this competition.`, 'error');
+      showToast('Ineligible', `${resolvedYear} is not eligible for this competition.`, 'error');
       return;
     }
 
@@ -314,20 +428,31 @@ export const RegisterEventPage: React.FC = () => {
           studentId: sId,
           name: st?.name || 'Student',
           registerNumber: st?.registerNumber || '',
-          year: st?.year || assignedYear,
+          year: st?.year || resolvedYear,
           class: st?.class || 'N/A',
           department: st?.department || 'N/A',
         };
       });
 
-      // Security check: Ensure all participants belong to the coordinator's assigned year
+      // Security check: Ensure all participants belong to the resolved academic year
+      const crossYearStudent = studentSummaries.find((s) => !isSameAcademicYear(s.year, resolvedYear));
+      if (crossYearStudent) {
+        showToast(
+          'Cross-Year Error',
+          `Participant "${crossYearStudent.name}" belongs to "${crossYearStudent.year}", which is outside "${resolvedYear}".`,
+          'error'
+        );
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Year coordinator assigned year check
       if (isYearCoordinator && user?.assignedYear) {
         const canonicalAssigned = normalizeAcademicYear(user.assignedYear);
-        const crossYearStudent = studentSummaries.find((s) => !isSameAcademicYear(s.year, canonicalAssigned));
-        if (crossYearStudent) {
+        if (!isSameAcademicYear(resolvedYear, canonicalAssigned)) {
           showToast(
-            'Cross-Year Error',
-            `Participant "${crossYearStudent.name}" belongs to "${crossYearStudent.year}", which is outside your assigned year "${user.assignedYear}".`,
+            'Unauthorized Year',
+            `You are assigned to "${user.assignedYear}" and cannot submit registrations for "${resolvedYear}".`,
             'error'
           );
           setIsSubmitting(false);
@@ -339,7 +464,7 @@ export const RegisterEventPage: React.FC = () => {
       const distinctDepts = Array.from(new Set(studentSummaries.map((s) => s.department))).filter(Boolean);
       const regClassName = distinctClasses.length === 1 ? distinctClasses[0] : (distinctClasses.join(', ') || 'All Sections');
       const regDept = distinctDepts.length === 1 ? distinctDepts[0] : (distinctDepts.join(', ') || 'Combined');
-      const regYear = assignedYear;
+      const regYear = resolvedYear;
       const captainStudent = event.eventType === 'team' ? students.find((s) => s.studentId === captainId) : undefined;
 
       if (isEditMode && existingRegistration) {
@@ -354,7 +479,7 @@ export const RegisterEventPage: React.FC = () => {
           relayOrder: undefined,
           updatedByUid: user.uid,
           isSuperCoordinator,
-          scopedYear: user.assignedYear,
+          scopedYear: isYearCoordinator ? user.assignedYear : undefined,
         });
 
         await recordActivity(
@@ -447,51 +572,55 @@ export const RegisterEventPage: React.FC = () => {
           </div>
 
           <h1 style={{ fontSize: 'var(--text-2xl)', marginBottom: '8px', color: 'var(--text-primary)' }}>
-            Official Registration Confirmed
+            {isEditMode ? 'Registration Updated Successfully' : 'Official Registration Confirmed'}
           </h1>
           <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-6)', fontSize: 'var(--text-sm)' }}>
-            Entry successfully recorded for <strong>{completedRegistration.eventNameSnapshot}</strong>.
+            Entry for <strong>{event.eventName}</strong> ({resolvedYear}) has been officially registered in ATHLON'26.
           </p>
 
           <div
             style={{
-              background: 'var(--bg-surface-elevated)',
+              background: 'var(--surface-elevated)',
               border: '1px solid var(--border-subtle)',
               borderRadius: 'var(--radius-md)',
-              padding: 'var(--space-4)',
+              padding: '20px',
               textAlign: 'left',
               marginBottom: 'var(--space-6)',
               display: 'flex',
               flexDirection: 'column',
-              gap: '8px',
+              gap: '10px',
               fontSize: 'var(--text-sm)',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Registration Ref ID:</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Registration ID:</span>
               <strong style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>
                 {completedRegistration.registrationId}
               </strong>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Academic Cohort Scope:</span>
-              <span style={{ color: 'var(--text-primary)' }}>
-                {completedRegistration.year}
-              </span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Event:</span>
+              <strong style={{ color: 'var(--text-primary)' }}>{event.eventName}</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Academic Year:</span>
+              <strong style={{ color: 'var(--text-primary)' }}>{resolvedYear}</strong>
             </div>
             {completedRegistration.teamName && (
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px' }}>
                 <span style={{ color: 'var(--text-secondary)' }}>Team Name:</span>
-                <strong style={{ color: 'var(--text-primary)' }}>
-                  {completedRegistration.teamName}
-                </strong>
+                <strong style={{ color: 'var(--text-primary)' }}>{completedRegistration.teamName}</strong>
+              </div>
+            )}
+            {completedRegistration.captainName && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Team Captain:</span>
+                <strong style={{ color: 'var(--text-primary)' }}>{completedRegistration.captainName}</strong>
               </div>
             )}
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: 'var(--text-secondary)' }}>Total Athletes:</span>
-              <span style={{ color: '#34d399', fontWeight: 600 }}>
-                {completedRegistration.participantCount} Participant(s)
-              </span>
+              <strong style={{ color: '#34d399' }}>{completedRegistration.participantCount} Participant(s)</strong>
             </div>
           </div>
 
@@ -518,7 +647,7 @@ export const RegisterEventPage: React.FC = () => {
   }
 
   // ALREADY REGISTERED BANNER (If Year already registered and not currently editing)
-  if (existingRegistration && !isEditMode && isYearCoordinator) {
+  if (existingRegistration && !isEditMode) {
     return (
       <div className="page-container" style={{ maxWidth: '800px', margin: 'var(--space-6) auto' }}>
         <div className="card" style={{ textAlign: 'center', padding: 'var(--space-8) var(--space-6)' }}>
@@ -540,11 +669,11 @@ export const RegisterEventPage: React.FC = () => {
           </div>
 
           <h1 style={{ fontSize: 'var(--text-2xl)', marginBottom: '8px', color: 'var(--text-primary)' }}>
-            {assignedYear} is Already Registered
+            {resolvedYear} is Already Registered
           </h1>
           <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-5)', fontSize: 'var(--text-sm)' }}>
-            An official team registration for <strong>{event.eventName}</strong> has already been submitted for {assignedYear}.
-            Each academic cohort is limited to one team entry.
+            An official team registration for <strong>{event.eventName}</strong> has already been submitted for {resolvedYear}.
+            Each academic cohort is limited to one entry.
           </p>
 
           <div
@@ -584,7 +713,7 @@ export const RegisterEventPage: React.FC = () => {
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-            {isOpen && (
+            {(isSuperCoordinator || (isOpen && isYearCoordinator)) && (
               <button onClick={handleStartEditing} className="btn btn-primary btn-md">
                 <Edit3 size={15} /> Edit Registration Roster
               </button>
@@ -636,7 +765,7 @@ export const RegisterEventPage: React.FC = () => {
                 {event.category} &bull; {event.eventType}
               </span>
               <span className="badge badge-year">
-                Academic Year: {assignedYear}
+                Academic Year: {resolvedYear}
               </span>
               <span
                 className="badge"
@@ -661,14 +790,35 @@ export const RegisterEventPage: React.FC = () => {
 
             <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', marginTop: '4px' }}>
               {event.eventType === 'team'
-                ? `Team size quota: ${minRequired}–${maxAllowed} students per year for ${assignedYear}.`
-                : `Quota: Up to ${maxAllowed} participant(s) per year for ${assignedYear}.`}
+                ? `Team size quota: ${minRequired}–${maxAllowed} students per year for ${resolvedYear}.`
+                : `Quota: Up to ${maxAllowed} participant(s) per year for ${resolvedYear}.`}
             </p>
+
+            {/* Super Coordinator Cohort Selector in Create Mode */}
+            {!isEditMode && isSuperCoordinator && (
+              <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                  Register Cohort Year:
+                </label>
+                <select
+                  value={resolvedYear}
+                  onChange={(e) => handleYearChange(e.target.value)}
+                  className="filter-select"
+                  style={{ fontSize: 'var(--text-xs)', height: '30px', padding: '0 8px' }}
+                >
+                  {CANONICAL_YEARS.map((yr) => (
+                    <option key={yr} value={yr}>
+                      {yr} {isYearEligible(event, yr) ? '' : '(Ineligible)'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
-              Selected for {assignedYear}:
+              Selected for {resolvedYear}:
             </div>
             <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 700, color: selectedStudentIds.length >= minRequired ? '#34d399' : '#f59e0b' }}>
               {selectedStudentIds.length} / {maxAllowed}
@@ -691,10 +841,10 @@ export const RegisterEventPage: React.FC = () => {
           <div className="card-header">
             <div>
               <h2 className="card-title">
-                <Users size={17} color="#3b82f6" /> Eligible {assignedYear} Students
+                <Users size={17} color="#3b82f6" /> Eligible {resolvedYear} Students
               </h2>
               <p className="card-subtitle">
-                Click any active student to add or remove them from your team
+                Click any active student to add or remove them from your entry
               </p>
             </div>
           </div>
@@ -706,7 +856,7 @@ export const RegisterEventPage: React.FC = () => {
               <input
                 type="text"
                 className="search-input"
-                placeholder="Search by student name or register no..."
+                placeholder={`Search ${resolvedYear} students by name or register no...`}
                 value={studentSearch}
                 onChange={(e) => setStudentSearch(e.target.value)}
               />
@@ -741,7 +891,7 @@ export const RegisterEventPage: React.FC = () => {
 
           {filteredStudents.length === 0 ? (
             <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)', textAlign: 'center', padding: 'var(--space-4)' }}>
-              No eligible {assignedYear} students found matching query or filters.
+              No eligible {resolvedYear} students found matching query or filters.
             </p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '440px', overflowY: 'auto' }}>
@@ -836,7 +986,7 @@ export const RegisterEventPage: React.FC = () => {
                 <ShieldCheck size={17} color="#10b981" />
                 {isEditMode ? 'Edit Team Details' : 'Team Details & Confirmation'}
               </h2>
-              <p className="card-subtitle">Configure team roster for {assignedYear}</p>
+              <p className="card-subtitle">Configure roster for {resolvedYear}</p>
             </div>
           </div>
 
@@ -849,7 +999,7 @@ export const RegisterEventPage: React.FC = () => {
                   type="text"
                   required
                   className="form-input"
-                  placeholder={`e.g. ${assignedYear} Strikers`}
+                  placeholder={`e.g. ${resolvedYear} Strikers`}
                   value={teamName}
                   onChange={(e) => setTeamName(e.target.value)}
                 />
@@ -940,7 +1090,7 @@ export const RegisterEventPage: React.FC = () => {
             <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <ShieldCheck size={14} color="#10b981" />
               <span>
-                Authorized by <strong>{user?.name}</strong> ({assignedYear})
+                Authorized by <strong>{user?.name}</strong> ({isSuperCoordinator ? 'Super Coordinator' : resolvedYear})
               </span>
             </div>
 

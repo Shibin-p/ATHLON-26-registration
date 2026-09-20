@@ -27,7 +27,7 @@ import {
 import { recordActivity } from '../services/activityLogService';
 import { getCollegeSettings } from '../services/settingsService';
 import { getAllEvents } from '../services/eventService';
-import { getAllRegistrations } from '../services/registrationService';
+import { getAllRegistrations, getScopedRegistrations } from '../services/registrationService';
 import {
   calculateParticipationFromRegistrations,
   getParticipationLimits,
@@ -106,11 +106,15 @@ export const StudentsPage: React.FC = () => {
         ? getStudentsByYear(canonicalAssigned)
         : getAllStudents();
 
+      const regsPromise = isYearCoordinator && canonicalAssigned
+        ? getScopedRegistrations(canonicalAssigned)
+        : getAllRegistrations();
+
       const [studs, colSettings, allEventsList, allRegsList] = await Promise.all([
         studentPromise,
         getCollegeSettings(),
         getAllEvents(),
-        getAllRegistrations(),
+        regsPromise,
       ]);
 
       setStudents(studs);

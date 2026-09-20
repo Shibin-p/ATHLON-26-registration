@@ -10,7 +10,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import type { Registration, StudentParticipantSummary, RelayPosition } from '../types';
+import type { Registration, StudentParticipantSummary, RelayPosition, Event } from '../types';
 import { normalizeAcademicYear } from '../utils/academicYear';
 import { removeUndefined } from '../utils/sanitize';
 import { isEventRegistrationOpen, isYearEligible, normalizeEventDoc } from './eventService';
@@ -320,10 +320,21 @@ export const submitRegistrationWithTransaction = async (params: {
   }
   const preEvent = normalizeEventDoc(preEventSnap.data(), preEventSnap.id);
 
+  // Pre-fetch cohort registrations with year constraint (satisfies Firestore security rules for Year Coordinator)
+  const cohortRegs = await getScopedRegistrations(canonicalYear);
+  const eventsCache = new Map<string, Event>();
+  eventsCache.set(eventId, preEvent);
+
   for (const pid of participantIds) {
     const studentInfo = participantsSnapshot.find((s) => s.studentId === pid);
     const studentName = studentInfo?.name || 'Selected student';
-    const { games, athletics } = await getStudentParticipationCount(pid);
+    const { games, athletics } = await getStudentParticipationCount(
+      pid,
+      eventsCache,
+      undefined,
+      canonicalYear,
+      cohortRegs
+    );
     validateStudentParticipationLimit({
       studentName,
       eventCategory: preEvent.category,
@@ -563,6 +574,7 @@ export const updateRegistrationWithTransaction = async (params: {
     throw new Error('Registration record not found.');
   }
   const existingReg = existingRegSnap.data() as Registration;
+  const canonicalYear = normalizeAcademicYear(existingReg.year);
 
   const eventSnapPre = await getDoc(doc(db, 'events', existingReg.eventId));
   if (!eventSnapPre.exists()) {
@@ -570,10 +582,21 @@ export const updateRegistrationWithTransaction = async (params: {
   }
   const preEvent = normalizeEventDoc(eventSnapPre.data(), eventSnapPre.id);
 
+  // Pre-fetch cohort registrations with year constraint (satisfies Firestore security rules for Year Coordinator)
+  const cohortRegs = await getScopedRegistrations(canonicalYear);
+  const eventsCache = new Map<string, Event>();
+  eventsCache.set(existingReg.eventId, preEvent);
+
   for (const pid of participantIds) {
     const studentInfo = participantsSnapshot.find((s) => s.studentId === pid);
     const studentName = studentInfo?.name || 'Selected student';
-    const { games, athletics } = await getStudentParticipationCount(pid, undefined, resolvedDocId);
+    const { games, athletics } = await getStudentParticipationCount(
+      pid,
+      eventsCache,
+      resolvedDocId,
+      canonicalYear,
+      cohortRegs
+    );
     validateStudentParticipationLimit({
       studentName,
       eventCategory: preEvent.category,

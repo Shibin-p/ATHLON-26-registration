@@ -10,6 +10,7 @@ import { db } from '../config/firebase';
 import type { Registration, Event, CollegeSettings } from '../types';
 import { normalizeEventDoc } from './eventService';
 import { DEFAULT_GAMES_LIMIT, DEFAULT_ATHLETICS_LIMIT } from './settingsService';
+import { normalizeAcademicYear } from '../utils/academicYear';
 
 /**
  * Check if an event category corresponds to a Game
@@ -47,13 +48,53 @@ export const getParticipationLimits = (settings?: CollegeSettings | null) => {
 };
 
 /**
- * Fetch all active registrations for a specific student from Firestore
+ * Fetch all active registrations for a specific student from Firestore.
+ * When scopedYear is provided, queries with year filter to strictly adhere to Year Coordinator security rules.
  */
 export const getStudentActiveRegistrations = async (
-  studentId: string
+  studentId: string,
+  scopedYear?: string
 ): Promise<Registration[]> => {
   if (!studentId) return [];
   const colRef = collection(db, 'registrations');
+
+  if (scopedYear) {
+    const canonicalYear = normalizeAcademicYear(scopedYear);
+    const q = query(colRef, where('year', '==', canonicalYear));
+    const snap = await getDocs(q);
+    return snap.docs
+      .map((d) => ({
+        ...(d.data() as Registration),
+        docId: d.id,
+        id: d.id,
+        registrationId: d.data().registrationId || d.id,
+      }))
+      .filter((r) => r.status === 'registered' && (r.participantIds || []).includes(studentId));
+  }
+
+  // If no scopedYear is provided, attempt to look up student's year first to preserve role security
+  try {
+    const studentSnap = await getDoc(doc(db, 'students', studentId));
+    if (studentSnap.exists()) {
+      const sYear = studentSnap.data()?.year || studentSnap.data()?.academicYear;
+      if (sYear) {
+        const canonicalYear = normalizeAcademicYear(sYear);
+        const q = query(colRef, where('year', '==', canonicalYear));
+        const snap = await getDocs(q);
+        return snap.docs
+          .map((d) => ({
+            ...(d.data() as Registration),
+            docId: d.id,
+            id: d.id,
+            registrationId: d.data().registrationId || d.id,
+          }))
+          .filter((r) => r.status === 'registered' && (r.participantIds || []).includes(studentId));
+      }
+    }
+  } catch {
+    // If student lookup failed or unneeded, fall back to array-contains query (Super Coordinator)
+  }
+
   const q = query(colRef, where('participantIds', 'array-contains', studentId));
   const snap = await getDocs(q);
 
@@ -68,14 +109,26 @@ export const getStudentActiveRegistrations = async (
 };
 
 /**
- * Calculate dynamic participation counts for a single student across Games and Athletics
+ * Calculate dynamic participation counts for a single student across Games and Athletics.
+ * Supports passing preloadedRegistrations or scopedYear for role-safe, high-performance execution.
  */
 export const getStudentParticipationCount = async (
   studentId: string,
   eventsCache?: Map<string, Event> | Record<string, Event>,
-  excludeRegistrationId?: string
+  excludeRegistrationId?: string,
+  scopedYear?: string,
+  preloadedRegistrations?: Registration[]
 ): Promise<{ games: number; athletics: number }> => {
-  const activeRegs = await getStudentActiveRegistrations(studentId);
+  let activeRegs: Registration[] = [];
+
+  if (preloadedRegistrations) {
+    activeRegs = preloadedRegistrations.filter(
+      (r) => r.status === 'registered' && (r.participantIds || []).includes(studentId)
+    );
+  } else {
+    activeRegs = await getStudentActiveRegistrations(studentId, scopedYear);
+  }
+
   let games = 0;
   let athletics = 0;
 
