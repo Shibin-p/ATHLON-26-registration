@@ -228,21 +228,21 @@ export const ReportsPage: React.FC = () => {
                     return (
                       <tr key={year}>
                         <td>
-                          <span className="badge badge-year">{year}</span>
+                          <span className="badge badge-year" style={{ whiteSpace: 'nowrap' }}>{year}</span>
                         </td>
-                        <td>{data.regs} entries</td>
-                        <td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{data.regs} entries</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
                           <strong style={{ color: 'var(--text-primary)' }}>{data.parts}</strong> athletes
                         </td>
                         <td>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <div className="progress-bar-wrap" style={{ width: '70px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: '65px' }}>
+                            <div className="progress-bar-wrap" style={{ flex: 1, minWidth: '35px', maxWidth: '70px' }}>
                               <div
                                 className="progress-bar-fill"
                                 style={{ width: `${sharePct}%`, background: 'var(--color-primary)' }}
                               />
                             </div>
-                            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
+                            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', minWidth: '28px', textAlign: 'right' }}>
                               {sharePct}%
                             </span>
                           </div>
@@ -297,18 +297,18 @@ export const ReportsPage: React.FC = () => {
                             {dept}
                           </strong>
                         </td>
-                        <td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
                           <span style={{ color: 'var(--text-primary)' }}>{count} athletes</span>
                         </td>
                         <td>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <div className="progress-bar-wrap" style={{ width: '70px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: '65px' }}>
+                            <div className="progress-bar-wrap" style={{ flex: 1, minWidth: '35px', maxWidth: '70px' }}>
                               <div
                                 className="progress-bar-fill"
                                 style={{ width: `${sharePct}%`, background: 'var(--color-success)' }}
                               />
                             </div>
-                            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
+                            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', minWidth: '28px', textAlign: 'right' }}>
                               {sharePct}%
                             </span>
                           </div>

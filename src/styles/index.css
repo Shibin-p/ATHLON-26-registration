@@ -476,6 +476,8 @@ button {
   display: flex;
   flex-direction: column;
   width: calc(100% - 260px);
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* Topbar Header */
@@ -818,6 +820,8 @@ button {
   .app-main-area {
     margin-left: 0;
     width: 100%;
+    min-width: 0;
+    max-width: 100%;
   }
 
   .mobile-hamburger-btn {
@@ -920,6 +924,9 @@ button {
   box-shadow: var(--shadow-card);
   position: relative;
   transition: border-color 0.15s ease;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .card:hover {
@@ -1027,27 +1034,39 @@ button {
 
 .grid-2col {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-5);
   margin-bottom: var(--space-6);
+  width: 100%;
+  min-width: 0;
 }
 
 .grid-3col {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-5);
   margin-bottom: var(--space-6);
+  width: 100%;
+  min-width: 0;
+}
+
+.grid-2col > *,
+.grid-3col > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .grid-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: var(--space-4);
+  width: 100%;
+  min-width: 0;
 }
 
 @media (max-width: 1024px) {
   .grid-2col, .grid-3col {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-4);
   }
 }
@@ -1059,6 +1078,15 @@ button {
   }
   .grid-cards {
     grid-template-columns: 1fr;
+  }
+  .card {
+    padding: var(--space-4);
+  }
+}
+
+@media (max-width: 430px) {
+  .card {
+    padding: var(--space-3);
   }
 }
 
@@ -1172,11 +1200,14 @@ button {
    ========================================================= */
 .table-responsive {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-subtle);
   background: var(--bg-surface);
   -webkit-overflow-scrolling: touch;
+  display: block;
 }
 
 .data-table {
@@ -1203,6 +1234,17 @@ button {
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-primary);
   vertical-align: middle;
+}
+
+@media (max-width: 640px) {
+  .data-table th {
+    padding: 0.5rem 0.65rem;
+    font-size: 0.7rem;
+  }
+  .data-table td {
+    padding: 0.6rem 0.65rem;
+    font-size: var(--text-xs);
+  }
 }
 
 .data-table tr:last-child td {
