@@ -13,16 +13,31 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { getEventById, isEventRegistrationOpen, isYearEligible } from '../services/eventService';
+import {
+  getEventById,
+  getAllEvents,
+  isEventRegistrationOpen,
+  isYearEligible,
+} from '../services/eventService';
 import { getScopedStudents, getAllStudents } from '../services/studentService';
 import {
   submitRegistrationWithTransaction,
   updateRegistrationWithTransaction,
   getEventRegistrationForYear,
   getRegistrationById,
+  getAllRegistrations,
 } from '../services/registrationService';
 import { recordActivity } from '../services/activityLogService';
-import { getCollegeSettings } from '../services/settingsService';
+import {
+  getCollegeSettings,
+  subscribeToCollegeSettings,
+} from '../services/settingsService';
+import {
+  isGameEvent,
+  isAthleticsEvent,
+  getParticipationLimits,
+  calculateParticipationFromRegistrations,
+} from '../services/participationService';
 import { exportSingleRegistrationPDF } from '../services/exportService';
 import { normalizeAcademicYear, isSameAcademicYear } from '../utils/academicYear';
 import { sortStudentsByName } from '../utils/studentSort';
@@ -43,6 +58,7 @@ export const RegisterEventPage: React.FC = () => {
   const [event, setEvent] = useState<Event | null>(null);
   const [students, setStudents] = useState<Student[]>([]);
   const [settings, setSettings] = useState<CollegeSettings | null>(null);
+  const [participationMap, setParticipationMap] = useState<Record<string, { games: number; athletics: number }>>({});
   const [loading, setLoading] = useState<boolean>(true);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
@@ -66,6 +82,14 @@ export const RegisterEventPage: React.FC = () => {
   // Success Confirmation View
   const [completedRegistration, setCompletedRegistration] = useState<Registration | null>(null);
 
+  // Listen to real-time college settings for dynamic limits
+  useEffect(() => {
+    const unsub = subscribeToCollegeSettings((newSettings) => {
+      setSettings(newSettings);
+    });
+    return () => unsub();
+  }, []);
+
   useEffect(() => {
     if (eventId) {
       loadData(eventId, registrationId);
@@ -75,9 +99,11 @@ export const RegisterEventPage: React.FC = () => {
   const loadData = async (id: string, editRegId?: string) => {
     setLoading(true);
     try {
-      const [evt, colSettings] = await Promise.all([
+      const [evt, colSettings, allEventsList, allRegsList] = await Promise.all([
         getEventById(id),
         getCollegeSettings(),
+        getAllEvents(),
+        getAllRegistrations(),
       ]);
 
       if (!evt) {
@@ -121,6 +147,12 @@ export const RegisterEventPage: React.FC = () => {
           setCaptainId(foundReg.captainId || '');
         }
       }
+
+      // Build live participation map across events
+      const eventsMap = new Map(allEventsList.map((e) => [e.eventId, e]));
+      const activeExcludeId = editRegId || foundReg?.registrationId || foundReg?.docId;
+      const pMap = calculateParticipationFromRegistrations(allRegsList, eventsMap, activeExcludeId);
+      setParticipationMap(pMap);
     } catch (err: any) {
       showToast('Error', err.message || 'Failed to initialize registration.', 'error');
     } finally {
@@ -160,6 +192,11 @@ export const RegisterEventPage: React.FC = () => {
   const maxAllowed = event.maxParticipantsPerYear || 10;
   const minRequired = event.minParticipantsPerYear || (event.eventType === 'team' ? 2 : 1);
 
+  // Dynamic Participation Limits
+  const limits = getParticipationLimits(settings);
+  const isCurrentEventGame = isGameEvent(event.category);
+  const isCurrentEventAthletic = isAthleticsEvent(event.category);
+
   // Filter options derived from student roster
   const availableClasses = Array.from(new Set(students.map((s) => s.class))).filter(Boolean).sort();
   const availableDepts = Array.from(new Set(students.map((s) => s.department))).filter(Boolean).sort();
@@ -181,10 +218,35 @@ export const RegisterEventPage: React.FC = () => {
   const handleToggleStudent = (studentId: string) => {
     if (registeredIdsExcludingSelf.has(studentId)) return;
 
+    const limits = getParticipationLimits(settings);
+    const isCurrentEventGame = isGameEvent(event?.category);
+    const isCurrentEventAthletic = isAthleticsEvent(event?.category);
+    const usage = participationMap[studentId] || { games: 0, athletics: 0 };
+    const stObj = students.find((s) => s.studentId === studentId);
+    const studentName = stObj?.name || 'Student';
+
     if (selectedStudentIds.includes(studentId)) {
       setSelectedStudentIds(selectedStudentIds.filter((id) => id !== studentId));
       if (captainId === studentId) setCaptainId('');
     } else {
+      // Check participation limits for the current event's category
+      if (isCurrentEventGame && usage.games >= limits.gamesLimit) {
+        showToast(
+          'Participation Limit Reached',
+          `"${studentName}" has already reached the maximum limit of ${limits.gamesLimit} Games (${usage.games}/${limits.gamesLimit}).`,
+          'warning'
+        );
+        return;
+      }
+      if (isCurrentEventAthletic && usage.athletics >= limits.athleticsLimit) {
+        showToast(
+          'Participation Limit Reached',
+          `"${studentName}" has already reached the maximum limit of ${limits.athleticsLimit} Athletics events (${usage.athletics}/${limits.athleticsLimit}).`,
+          'warning'
+        );
+        return;
+      }
+
       if (selectedStudentIds.length >= maxAllowed) {
         showToast(
           'Capacity Limit',
@@ -194,7 +256,7 @@ export const RegisterEventPage: React.FC = () => {
         return;
       }
       setSelectedStudentIds([...selectedStudentIds, studentId]);
-      if (event.eventType === 'team' && !captainId) {
+      if (event?.eventType === 'team' && !captainId) {
         setCaptainId(studentId);
       }
     }
@@ -576,6 +638,16 @@ export const RegisterEventPage: React.FC = () => {
               <span className="badge badge-year">
                 Academic Year: {assignedYear}
               </span>
+              <span
+                className="badge"
+                style={{
+                  background: 'rgba(245, 158, 11, 0.12)',
+                  color: '#f59e0b',
+                  border: '1px solid rgba(245, 158, 11, 0.25)',
+                }}
+              >
+                Limits: Max {limits.gamesLimit} Games &bull; Max {limits.athleticsLimit} Athletics
+              </span>
               {isEditMode && (
                 <span className="badge badge-warning">
                   EDIT MODE
@@ -676,11 +748,18 @@ export const RegisterEventPage: React.FC = () => {
               {filteredStudents.map((st) => {
                 const isSelected = selectedStudentIds.includes(st.studentId);
                 const isRegisteredElsewhere = registeredIdsExcludingSelf.has(st.studentId);
+                const usage = participationMap[st.studentId] || { games: 0, athletics: 0 };
+                const gamesLeft = Math.max(0, limits.gamesLimit - usage.games);
+                const athleticsLeft = Math.max(0, limits.athleticsLimit - usage.athletics);
+                const isLimitReachedForEvent =
+                  (isCurrentEventGame && usage.games >= limits.gamesLimit) ||
+                  (isCurrentEventAthletic && usage.athletics >= limits.athleticsLimit);
+                const isBlocked = isRegisteredElsewhere || (!isSelected && isLimitReachedForEvent);
 
                 return (
                   <div
                     key={st.studentId}
-                    onClick={() => !isRegisteredElsewhere && handleToggleStudent(st.studentId)}
+                    onClick={() => !isBlocked && handleToggleStudent(st.studentId)}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -691,8 +770,8 @@ export const RegisterEventPage: React.FC = () => {
                         ? 'var(--color-primary-light)'
                         : 'var(--bg-surface-elevated)',
                       border: `1px solid ${isSelected ? 'var(--color-primary-border)' : 'var(--border-subtle)'}`,
-                      cursor: isRegisteredElsewhere ? 'not-allowed' : 'pointer',
-                      opacity: isRegisteredElsewhere ? 0.45 : 1,
+                      cursor: isBlocked ? 'not-allowed' : 'pointer',
+                      opacity: isRegisteredElsewhere ? 0.45 : isLimitReachedForEvent && !isSelected ? 0.65 : 1,
                       transition: 'all 0.15s ease',
                     }}
                   >
@@ -703,12 +782,36 @@ export const RegisterEventPage: React.FC = () => {
                       <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
                         {st.registerNumber} &bull; <span style={{ color: 'var(--text-primary)' }}>{st.class}</span> &bull; {st.department}
                       </div>
+                      {/* Live Usage & Remaining Allowance */}
+                      <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '3px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span>
+                          Games: <strong style={{ color: usage.games >= limits.gamesLimit ? '#f87171' : 'var(--text-primary)' }}>{usage.games}/{limits.gamesLimit}</strong> ({gamesLeft} left)
+                        </span>
+                        <span>&bull;</span>
+                        <span>
+                          Athletics: <strong style={{ color: usage.athletics >= limits.athleticsLimit ? '#f87171' : 'var(--text-primary)' }}>{usage.athletics}/{limits.athleticsLimit}</strong> ({athleticsLeft} left)
+                        </span>
+                      </div>
                     </div>
 
                     <div>
                       {isRegisteredElsewhere ? (
                         <span className="badge" style={{ fontSize: '10px', background: 'rgba(239, 68, 68, 0.1)', color: '#f87171' }}>
                           Registered in Event
+                        </span>
+                      ) : isLimitReachedForEvent && !isSelected ? (
+                        <span
+                          className="badge"
+                          style={{
+                            fontSize: '10px',
+                            background: 'rgba(245, 158, 11, 0.15)',
+                            color: '#f59e0b',
+                            border: '1px solid rgba(245, 158, 11, 0.3)',
+                          }}
+                        >
+                          {isCurrentEventGame
+                            ? `Games limit reached (${usage.games}/${limits.gamesLimit})`
+                            : `Athletics limit reached (${usage.athletics}/${limits.athleticsLimit})`}
                         </span>
                       ) : isSelected ? (
                         <CheckCircle2 size={16} color="#60a5fa" />

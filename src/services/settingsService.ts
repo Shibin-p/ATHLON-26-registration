@@ -2,6 +2,7 @@ import {
   doc,
   getDoc,
   setDoc,
+  onSnapshot,
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
@@ -31,6 +32,9 @@ export const DEFAULT_ACADEMIC_STRUCTURE: AcademicStructure = {
   ],
 };
 
+export const DEFAULT_GAMES_LIMIT = 6;
+export const DEFAULT_ATHLETICS_LIMIT = 3;
+
 export const DEFAULT_SETTINGS: CollegeSettings = {
   settingId: SETTINGS_DOC_ID,
   collegeName: 'College of Engineering & Technology',
@@ -40,6 +44,8 @@ export const DEFAULT_SETTINGS: CollegeSettings = {
   contactEmail: 'sports@college.edu',
   contactPhone: '+91 98765 43210',
   academicStructure: DEFAULT_ACADEMIC_STRUCTURE,
+  gamesLimit: DEFAULT_GAMES_LIMIT,
+  athleticsLimit: DEFAULT_ATHLETICS_LIMIT,
 };
 
 /**
@@ -55,6 +61,8 @@ export const getCollegeSettings = async (): Promise<CollegeSettings> => {
       return {
         ...DEFAULT_SETTINGS,
         ...data,
+        gamesLimit: typeof data.gamesLimit === 'number' ? data.gamesLimit : DEFAULT_GAMES_LIMIT,
+        athleticsLimit: typeof data.athleticsLimit === 'number' ? data.athleticsLimit : DEFAULT_ATHLETICS_LIMIT,
         academicStructure: data.academicStructure || DEFAULT_ACADEMIC_STRUCTURE,
       };
     }
@@ -67,6 +75,8 @@ export const getCollegeSettings = async (): Promise<CollegeSettings> => {
       return {
         ...DEFAULT_SETTINGS,
         ...data,
+        gamesLimit: typeof data.gamesLimit === 'number' ? data.gamesLimit : DEFAULT_GAMES_LIMIT,
+        athleticsLimit: typeof data.athleticsLimit === 'number' ? data.athleticsLimit : DEFAULT_ATHLETICS_LIMIT,
         academicStructure: data.academicStructure || DEFAULT_ACADEMIC_STRUCTURE,
       };
     }
@@ -76,6 +86,36 @@ export const getCollegeSettings = async (): Promise<CollegeSettings> => {
     console.error('Failed to fetch settings from Firestore:', error);
     return DEFAULT_SETTINGS;
   }
+};
+
+/**
+ * Subscribe to real-time college settings updates
+ */
+export const subscribeToCollegeSettings = (
+  callback: (settings: CollegeSettings) => void
+): (() => void) => {
+  const docRef = doc(db, 'settings', SETTINGS_DOC_ID);
+  return onSnapshot(
+    docRef,
+    (snap) => {
+      if (snap.exists()) {
+        const data = snap.data() as Partial<CollegeSettings>;
+        callback({
+          ...DEFAULT_SETTINGS,
+          ...data,
+          gamesLimit: typeof data.gamesLimit === 'number' ? data.gamesLimit : DEFAULT_GAMES_LIMIT,
+          athleticsLimit: typeof data.athleticsLimit === 'number' ? data.athleticsLimit : DEFAULT_ATHLETICS_LIMIT,
+          academicStructure: data.academicStructure || DEFAULT_ACADEMIC_STRUCTURE,
+        });
+      } else {
+        callback(DEFAULT_SETTINGS);
+      }
+    },
+    (err) => {
+      console.error('Real-time settings listener error:', err);
+      callback(DEFAULT_SETTINGS);
+    }
+  );
 };
 
 /**

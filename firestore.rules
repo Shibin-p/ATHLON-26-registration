@@ -98,9 +98,13 @@ service cloud.firestore {
         )
       );
 
-      // Master student database is strictly managed by Super Coordinator only
-      // Year Coordinators, View Coordinators, and unauthenticated users have NO create, update, or delete permissions
-      allow create, update, delete: if isSuperCoordinator();
+      // Master student database is strictly managed by Super Coordinator only.
+      // Year Coordinators can only update lastRegistrationAt/updatedAt for registration concurrency locking.
+      allow create, delete: if isSuperCoordinator();
+      allow update: if isSuperCoordinator() || (
+        isActiveUser() && (isYearCoordinator() || isSuperCoordinator()) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastRegistrationAt', 'updatedAt'])
+      );
     }
 
     // ========================================================

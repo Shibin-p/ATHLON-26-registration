@@ -161,6 +161,8 @@ export interface CollegeSettings {
   contactEmail?: string;
   contactPhone?: string;
   academicStructure: AcademicStructure;
+  gamesLimit?: number; // Maximum games per student (default 6)
+  athleticsLimit?: number; // Maximum athletic events per student (default 3)
   updatedAt?: any;
   updatedBy?: string;
 }

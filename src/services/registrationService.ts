@@ -14,6 +14,12 @@ import type { Registration, StudentParticipantSummary, RelayPosition } from '../
 import { normalizeAcademicYear } from '../utils/academicYear';
 import { removeUndefined } from '../utils/sanitize';
 import { isEventRegistrationOpen, isYearEligible, normalizeEventDoc } from './eventService';
+import { getCollegeSettings } from './settingsService';
+import {
+  getParticipationLimits,
+  getStudentParticipationCount,
+  validateStudentParticipationLimit,
+} from './participationService';
 
 /**
  * Generate human-readable registration ID: SPT-2026-XXXX
@@ -302,6 +308,32 @@ export const submitRegistrationWithTransaction = async (params: {
 
   const canonicalYear = normalizeAcademicYear(year);
 
+  // Validate student participation limits (Games vs Athletics)
+  const settings = await getCollegeSettings();
+  const { gamesLimit, athleticsLimit } = getParticipationLimits(settings);
+
+  // Pre-fetch event to determine category
+  const preEventRef = doc(db, 'events', eventId);
+  const preEventSnap = await getDoc(preEventRef);
+  if (!preEventSnap.exists()) {
+    throw new Error('Event not found.');
+  }
+  const preEvent = normalizeEventDoc(preEventSnap.data(), preEventSnap.id);
+
+  for (const pid of participantIds) {
+    const studentInfo = participantsSnapshot.find((s) => s.studentId === pid);
+    const studentName = studentInfo?.name || 'Selected student';
+    const { games, athletics } = await getStudentParticipationCount(pid);
+    validateStudentParticipationLimit({
+      studentName,
+      eventCategory: preEvent.category,
+      currentActiveGames: games,
+      currentActiveAthletics: athletics,
+      gamesLimit,
+      athleticsLimit,
+    });
+  }
+
   return await runTransaction(db, async (transaction) => {
     // 1. Read event inside transaction
     const eventRef = doc(db, 'events', eventId);
@@ -394,6 +426,11 @@ export const submitRegistrationWithTransaction = async (params: {
           `Security violation: Student "${studentData.name}" belongs to "${studentData.year || studentYear}", but this registration is scoped to "${canonicalYear}". Cross-year registration is rejected.`
         );
       }
+
+      // Concurrency touch to ensure atomic OCC serialization
+      transaction.update(studentRef, {
+        lastRegistrationAt: serverTimestamp(),
+      });
     }
 
     // 8. Validate Coordinator Authority
@@ -516,6 +553,37 @@ export const updateRegistrationWithTransaction = async (params: {
     throw new Error(`Registration record "${registrationId}" not found.`);
   }
 
+  // Pre-validate participation limits for incoming participants, excluding this registration
+  const settings = await getCollegeSettings();
+  const { gamesLimit, athleticsLimit } = getParticipationLimits(settings);
+
+  const existingRegRef = doc(db, 'registrations', resolvedDocId);
+  const existingRegSnap = await getDoc(existingRegRef);
+  if (!existingRegSnap.exists()) {
+    throw new Error('Registration record not found.');
+  }
+  const existingReg = existingRegSnap.data() as Registration;
+
+  const eventSnapPre = await getDoc(doc(db, 'events', existingReg.eventId));
+  if (!eventSnapPre.exists()) {
+    throw new Error('Associated competition event not found.');
+  }
+  const preEvent = normalizeEventDoc(eventSnapPre.data(), eventSnapPre.id);
+
+  for (const pid of participantIds) {
+    const studentInfo = participantsSnapshot.find((s) => s.studentId === pid);
+    const studentName = studentInfo?.name || 'Selected student';
+    const { games, athletics } = await getStudentParticipationCount(pid, undefined, resolvedDocId);
+    validateStudentParticipationLimit({
+      studentName,
+      eventCategory: preEvent.category,
+      currentActiveGames: games,
+      currentActiveAthletics: athletics,
+      gamesLimit,
+      athleticsLimit,
+    });
+  }
+
   await runTransaction(db, async (transaction) => {
     const regRef = doc(db, 'registrations', resolvedDocId);
     const regSnap = await transaction.get(regRef);
@@ -595,6 +663,11 @@ export const updateRegistrationWithTransaction = async (params: {
           `Security violation: Student "${studentData.name}" belongs to "${studentData.year || studentYear}", but this registration is scoped to "${canonicalYear}".`
         );
       }
+
+      // Concurrency touch
+      transaction.update(studentRef, {
+        lastRegistrationAt: serverTimestamp(),
+      });
     }
 
     // 5. Duplicate student check across other teams

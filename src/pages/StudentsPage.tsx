@@ -26,12 +26,18 @@ import {
 } from '../services/studentService';
 import { recordActivity } from '../services/activityLogService';
 import { getCollegeSettings } from '../services/settingsService';
+import { getAllEvents } from '../services/eventService';
+import { getAllRegistrations } from '../services/registrationService';
+import {
+  calculateParticipationFromRegistrations,
+  getParticipationLimits,
+} from '../services/participationService';
 import { Modal } from '../components/common/Modal';
 import { ConfirmModal } from '../components/common/ConfirmModal';
 import { PageHeader } from '../components/common/PageHeader';
 import { EmptyState } from '../components/common/EmptyState';
 import { SkeletonTable } from '../components/common/Skeleton';
-import type { Student, AcademicStructure } from '../types';
+import type { Student, AcademicStructure, CollegeSettings } from '../types';
 import { CANONICAL_YEARS, normalizeAcademicYear, isSameAcademicYear } from '../utils/academicYear';
 import { sortStudentsByName, sortStudentsByRegisterNumber } from '../utils/studentSort';
 
@@ -45,6 +51,8 @@ export const StudentsPage: React.FC = () => {
     classes: [],
     departments: [],
   });
+  const [settings, setSettings] = useState<CollegeSettings | null>(null);
+  const [participationMap, setParticipationMap] = useState<Record<string, { games: number; athletics: number }>>({});
   const [loading, setLoading] = useState<boolean>(true);
 
   // Filters & Search
@@ -98,35 +106,43 @@ export const StudentsPage: React.FC = () => {
         ? getStudentsByYear(canonicalAssigned)
         : getAllStudents();
 
-      const [studs, settings] = await Promise.all([
+      const [studs, colSettings, allEventsList, allRegsList] = await Promise.all([
         studentPromise,
         getCollegeSettings(),
+        getAllEvents(),
+        getAllRegistrations(),
       ]);
 
       setStudents(studs);
+      setSettings(colSettings);
+
+      const eventsMap = new Map(allEventsList.map((e) => [e.eventId, e]));
+      const pMap = calculateParticipationFromRegistrations(allRegsList, eventsMap);
+      setParticipationMap(pMap);
+
       if (isYearCoordinator && canonicalAssigned) {
         setSelectedYear(canonicalAssigned);
       }
 
-      if (settings.academicStructure) {
+      if (colSettings.academicStructure) {
         const canonicalList = Array.from(
-          new Set(settings.academicStructure.years.map(normalizeAcademicYear))
+          new Set(colSettings.academicStructure.years.map(normalizeAcademicYear))
         ).filter(Boolean);
         const finalYears = canonicalList.length > 0 ? canonicalList : [...CANONICAL_YEARS];
 
         setAcademicStructure({
-          ...settings.academicStructure,
+          ...colSettings.academicStructure,
           years: finalYears,
         });
 
         if (finalYears.length > 0) {
           setFormYear(finalYears.includes('4TH YEAR') ? '4TH YEAR' : finalYears[0]);
         }
-        if (settings.academicStructure.classes.length > 0) {
-          setFormClass(settings.academicStructure.classes[0].name);
+        if (colSettings.academicStructure.classes.length > 0) {
+          setFormClass(colSettings.academicStructure.classes[0].name);
         }
-        if (settings.academicStructure.departments.length > 0) {
-          setFormDept(settings.academicStructure.departments[0]);
+        if (colSettings.academicStructure.departments.length > 0) {
+          setFormDept(colSettings.academicStructure.departments[0]);
         }
       }
     } catch (err: any) {
@@ -599,37 +615,56 @@ export const StudentsPage: React.FC = () => {
                   <th>Cohort</th>
                   <th>Class</th>
                   <th>Department</th>
+                  <th>Participation</th>
                   <th>Status</th>
                   {isSuperCoordinator && <th style={{ textAlign: 'right' }}>Actions</th>}
                 </tr>
               </thead>
               <tbody>
-                {paginatedStudents.map((st) => (
-                  <tr key={st.studentId}>
-                    <td>
-                      <span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--text-primary)', fontSize: 'var(--text-xs)' }}>
-                        {st.registerNumber}
-                      </span>
-                    </td>
-                    <td>
-                      <strong style={{ color: 'var(--text-primary)' }}>{st.name}</strong>
-                    </td>
-                    <td>
-                      <span className="badge" style={{ background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}>
-                        {st.year}
-                      </span>
-                    </td>
-                    <td>
-                      <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-primary)' }}>{st.class}</span>
-                    </td>
-                    <td>
-                      <span className="table-cell-muted">{st.department}</span>
-                    </td>
-                    <td>
-                      <span className={`status-badge status-${st.active ? 'active' : 'inactive'}`}>
-                        {st.active ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
+                {paginatedStudents.map((st) => {
+                  const limits = getParticipationLimits(settings);
+                  const usage = participationMap[st.studentId] || { games: 0, athletics: 0 };
+                  const gamesLeft = Math.max(0, limits.gamesLimit - usage.games);
+                  const athleticsLeft = Math.max(0, limits.athleticsLimit - usage.athletics);
+
+                  return (
+                    <tr key={st.studentId}>
+                      <td>
+                        <span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--text-primary)', fontSize: 'var(--text-xs)' }}>
+                          {st.registerNumber}
+                        </span>
+                      </td>
+                      <td>
+                        <strong style={{ color: 'var(--text-primary)' }}>{st.name}</strong>
+                      </td>
+                      <td>
+                        <span className="badge" style={{ background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}>
+                          {st.year}
+                        </span>
+                      </td>
+                      <td>
+                        <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-primary)' }}>{st.class}</span>
+                      </td>
+                      <td>
+                        <span className="table-cell-muted">{st.department}</span>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', fontSize: 'var(--text-xs)' }}>
+                          <span style={{ whiteSpace: 'nowrap' }}>
+                            Games: <strong style={{ color: usage.games >= limits.gamesLimit ? '#f87171' : usage.games > 0 ? '#60a5fa' : 'var(--text-secondary)' }}>{usage.games}/{limits.gamesLimit}</strong>
+                            <span style={{ color: 'var(--text-tertiary)', fontSize: '11px', marginLeft: '4px' }}>({gamesLeft} left)</span>
+                          </span>
+                          <span style={{ whiteSpace: 'nowrap' }}>
+                            Athletics: <strong style={{ color: usage.athletics >= limits.athleticsLimit ? '#f87171' : usage.athletics > 0 ? '#34d399' : 'var(--text-secondary)' }}>{usage.athletics}/{limits.athleticsLimit}</strong>
+                            <span style={{ color: 'var(--text-tertiary)', fontSize: '11px', marginLeft: '4px' }}>({athleticsLeft} left)</span>
+                          </span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className={`status-badge status-${st.active ? 'active' : 'inactive'}`}>
+                          {st.active ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
                     {isSuperCoordinator && (
                       <td style={{ textAlign: 'right' }}>
                         <div style={{ display: 'inline-flex', gap: '4px', alignItems: 'center', whiteSpace: 'nowrap' }}>
@@ -661,7 +696,8 @@ export const StudentsPage: React.FC = () => {
                       </td>
                     )}
                   </tr>
-                ))}
+                );
+              })}
               </tbody>
             </table>
           </div>
@@ -811,6 +847,35 @@ export const StudentsPage: React.FC = () => {
         title="Edit Student Record"
         subtitle={`Updating profile for ${editingStudent?.name}`}
       >
+        {editingStudent && (
+          <div
+            style={{
+              marginBottom: '16px',
+              padding: '10px 14px',
+              borderRadius: 'var(--radius-sm)',
+              background: 'var(--bg-surface-elevated)',
+              border: '1px solid var(--border-subtle)',
+              fontSize: 'var(--text-xs)',
+            }}
+          >
+            <div style={{ fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+              ATHLON'26 Participation Usage:
+            </div>
+            <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
+              <span>
+                Games: <strong style={{ color: (participationMap[editingStudent.studentId]?.games || 0) >= (settings?.gamesLimit ?? 6) ? '#f87171' : '#60a5fa' }}>
+                  {participationMap[editingStudent.studentId]?.games || 0}/{settings?.gamesLimit ?? 6}
+                </strong> ({Math.max(0, (settings?.gamesLimit ?? 6) - (participationMap[editingStudent.studentId]?.games || 0))} left)
+              </span>
+              <span>
+                Athletics: <strong style={{ color: (participationMap[editingStudent.studentId]?.athletics || 0) >= (settings?.athleticsLimit ?? 3) ? '#f87171' : '#34d399' }}>
+                  {participationMap[editingStudent.studentId]?.athletics || 0}/{settings?.athleticsLimit ?? 3}
+                </strong> ({Math.max(0, (settings?.athleticsLimit ?? 3) - (participationMap[editingStudent.studentId]?.athletics || 0))} left)
+              </span>
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleSaveEdit}>
           <div className="form-group">
             <label className="form-label">Register Number *</label>

@@ -40,6 +40,13 @@ export const SettingsPage: React.FC = () => {
     departments: [],
   });
 
+  // Participation Limits Form
+  const [gamesLimit, setGamesLimit] = useState<number>(6);
+  const [athleticsLimit, setAthleticsLimit] = useState<number>(3);
+  const [initialGamesLimit, setInitialGamesLimit] = useState<number>(6);
+  const [initialAthleticsLimit, setInitialAthleticsLimit] = useState<number>(3);
+  const [isSavingLimits, setIsSavingLimits] = useState<boolean>(false);
+
   // Inputs for adding items
   const [newYearInput, setNewYearInput] = useState('');
   const [newDeptInput, setNewDeptInput] = useState('');
@@ -61,6 +68,12 @@ export const SettingsPage: React.FC = () => {
       setAcademicYear(data.academicYear);
       setContactEmail(data.contactEmail || '');
       setContactPhone(data.contactPhone || '');
+      const gLimit = typeof data.gamesLimit === 'number' ? data.gamesLimit : 6;
+      const aLimit = typeof data.athleticsLimit === 'number' ? data.athleticsLimit : 3;
+      setGamesLimit(gLimit);
+      setAthleticsLimit(aLimit);
+      setInitialGamesLimit(gLimit);
+      setInitialAthleticsLimit(aLimit);
       if (data.academicStructure) {
         setAcademicStructure(data.academicStructure);
         if (data.academicStructure.years.length > 0) {
@@ -133,6 +146,50 @@ export const SettingsPage: React.FC = () => {
       showToast('Save Error', err.message || 'Failed to update academic structure.', 'error');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleSaveLimits = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    const gLimit = Math.max(1, Math.floor(Number(gamesLimit) || 6));
+    const aLimit = Math.max(1, Math.floor(Number(athleticsLimit) || 3));
+    setIsSavingLimits(true);
+    try {
+      await updateCollegeSettings(
+        {
+          gamesLimit: gLimit,
+          athleticsLimit: aLimit,
+        },
+        user.uid
+      );
+
+      await recordActivity(
+        'PARTICIPATION_LIMITS_UPDATED' as any,
+        user.uid,
+        user.name,
+        user.role,
+        'settings',
+        'college',
+        {
+          details: `Updated participation limits: Games = ${gLimit} (was ${initialGamesLimit}), Athletics = ${aLimit} (was ${initialAthleticsLimit})`,
+          gamesLimit: gLimit,
+          athleticsLimit: aLimit,
+          previousGamesLimit: initialGamesLimit,
+          previousAthleticsLimit: initialAthleticsLimit,
+        }
+      );
+
+      setGamesLimit(gLimit);
+      setAthleticsLimit(aLimit);
+      setInitialGamesLimit(gLimit);
+      setInitialAthleticsLimit(aLimit);
+
+      showToast('Limits Saved', 'Participation limits successfully updated.', 'success');
+    } catch (err: any) {
+      showToast('Save Error', err.message || 'Failed to update participation limits.', 'error');
+    } finally {
+      setIsSavingLimits(false);
     }
   };
 
@@ -319,6 +376,91 @@ export const SettingsPage: React.FC = () => {
               value={contactPhone}
               onChange={(e) => setContactPhone(e.target.value)}
             />
+          </div>
+        </div>
+      </form>
+
+      {/* Section: Participant Registration Limits */}
+      <form onSubmit={handleSaveLimits}>
+        <div className="card" style={{ marginBottom: 'var(--space-6)' }}>
+          <div className="card-header">
+            <div>
+              <h2 className="card-title">
+                <Trophy size={17} color="#f59e0b" />
+                Participant Registration Limits
+              </h2>
+              <p className="card-subtitle">
+                Configure maximum independent event allocations per student for Games and Athletics
+              </p>
+            </div>
+            <button
+              type="submit"
+              className="btn btn-primary btn-sm"
+              disabled={
+                isSavingLimits ||
+                (gamesLimit === initialGamesLimit && athleticsLimit === initialAthleticsLimit)
+              }
+            >
+              <Save size={14} /> Save Limits
+            </button>
+          </div>
+
+          <div className="form-grid-2">
+            <div className="form-group">
+              <label className="form-label">
+                Max Games per Student *
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="50"
+                required
+                className="form-input"
+                value={gamesLimit}
+                onChange={(e) => setGamesLimit(Math.max(1, parseInt(e.target.value) || 1))}
+              />
+              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', marginTop: '4px', display: 'block' }}>
+                Default is 6. Controls individual/team sports categorized under <strong>Games</strong> (e.g., Football, Cricket, Badminton).
+              </span>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">
+                Max Athletics Events per Student *
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="50"
+                required
+                className="form-input"
+                value={athleticsLimit}
+                onChange={(e) => setAthleticsLimit(Math.max(1, parseInt(e.target.value) || 1))}
+              />
+              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', marginTop: '4px', display: 'block' }}>
+                Default is 3. Controls track and field events categorized under <strong>Athletics</strong> (e.g., 100m, Relay, Long Jump).
+              </span>
+            </div>
+          </div>
+
+          <div
+            style={{
+              marginTop: 'var(--space-2)',
+              padding: '10px 14px',
+              borderRadius: 'var(--radius-sm)',
+              background: 'var(--bg-surface-elevated)',
+              border: '1px solid var(--border-subtle)',
+              fontSize: 'var(--text-xs)',
+              color: 'var(--text-secondary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+            }}
+          >
+            <ShieldCheck size={14} color="#10b981" />
+            <span>
+              Limits are calculated dynamically from active registrations. Lowering limits will not delete or invalidate existing records.
+            </span>
           </div>
         </div>
       </form>
