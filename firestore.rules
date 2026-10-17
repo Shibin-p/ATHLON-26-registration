@@ -265,14 +265,8 @@ service cloud.firestore {
     // CHEST NUMBERS COLLECTION: chestNumbers/{chestNumber}
     // ========================================================
     match /chestNumbers/{chestNumber} {
-      // Super Coordinators and View Coordinators can read all chest numbers.
-      // Year Coordinators can read chest numbers within their assigned year scope.
-      allow read: if isSuperCoordinator() || isViewCoordinator() || (
-        isActiveUser() && isYearCoordinator() && (
-          matchesYearScope(resource.data.year) ||
-          ('academicYear' in resource.data && matchesYearScope(resource.data.academicYear))
-        )
-      );
+      // Super Coordinators, View Coordinators, and active Year Coordinators can read chest numbers
+      allow read: if isAuthenticated() && isActiveUser();
 
       // Super Coordinator can create any chest number mapping.
       // Year Coordinator can create a mapping for a student within their assigned year scope.

@@ -275,15 +275,19 @@ export const prepareChestNumberAllocationsInTransaction = async (
  */
 export const commitChestNumberAllocationsInTransaction = (
   transaction: Transaction,
-  prepared: PreparedChestResult
+  prepared: PreparedChestResult,
+  options?: { updateStudent?: boolean }
 ): void => {
+  const updateStudent = options?.updateStudent ?? false;
   for (const alloc of prepared.allocations) {
     if (alloc.isNew && alloc.candidateRef && alloc.candidateData) {
       transaction.set(alloc.candidateRef, alloc.candidateData);
-      transaction.update(alloc.studentRef, {
-        chestNumber: alloc.chestNumber,
-        updatedAt: serverTimestamp(),
-      });
+      if (updateStudent) {
+        transaction.update(alloc.studentRef, {
+          chestNumber: alloc.chestNumber,
+          updatedAt: serverTimestamp(),
+        });
+      }
     }
   }
 
@@ -333,7 +337,7 @@ export const allocateChestNumbersInTransaction = async (
     coordinatorId
   );
 
-  commitChestNumberAllocationsInTransaction(transaction, prepared);
+  commitChestNumberAllocationsInTransaction(transaction, prepared, { updateStudent: true });
 
   return prepared.allocatedMap;
 };
