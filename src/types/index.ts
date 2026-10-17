@@ -26,6 +26,7 @@ export interface Student {
   class: string; // Division/Section e.g., 'CSE-A', 'ECE-B'
   department: string; // Academic Department
   active: boolean;
+  chestNumber?: string; // 4-digit unique athletics chest number
   createdAt?: any;
   updatedAt?: any;
   createdBy?: string;
@@ -94,6 +95,7 @@ export interface StudentParticipantSummary {
   year: string;
   class: string;
   department: string;
+  chestNumber?: string;
 }
 
 export interface Registration {
@@ -124,7 +126,22 @@ export interface Registration {
 }
 
 // 5. Activity Log Record in Firestore: activityLogs/{logId}
-export type EntityType = 'student' | 'event' | 'registration' | 'coordinator' | 'settings' | 'system';
+export type EntityType = 'student' | 'event' | 'registration' | 'coordinator' | 'settings' | 'system' | 'chestNumber';
+
+// 5b. Dedicated Chest Number Record in Firestore: chestNumbers/{chestNumber}
+export interface ChestNumberRecord {
+  chestNumber: string;
+  studentId: string;
+  studentName: string;
+  registerNumber: string;
+  year: string;
+  class?: string;
+  department?: string;
+  assignedAt?: any;
+  assignedBy?: string;
+  updatedAt?: any;
+  updatedBy?: string;
+}
 
 export interface ActivityLog {
   logId: string;

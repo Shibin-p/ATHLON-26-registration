@@ -431,6 +431,7 @@ export const RegisterEventPage: React.FC = () => {
           year: st?.year || resolvedYear,
           class: st?.class || 'N/A',
           department: st?.department || 'N/A',
+          chestNumber: st?.chestNumber,
         };
       });
 
@@ -622,11 +623,47 @@ export const RegisterEventPage: React.FC = () => {
               <span style={{ color: 'var(--text-secondary)' }}>Total Athletes:</span>
               <strong style={{ color: '#34d399' }}>{completedRegistration.participantCount} Participant(s)</strong>
             </div>
+
+            {isAthleticsEvent(event.category) && completedRegistration.participantsSnapshot && (
+              <div style={{ marginTop: '14px', borderTop: '1px solid var(--border-subtle)', paddingTop: '12px' }}>
+                <span style={{ color: 'var(--text-secondary)', display: 'block', marginBottom: '8px', fontWeight: 600, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Assigned Athletics Chest Numbers:
+                </span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {completedRegistration.participantsSnapshot.map((p) => (
+                    <div
+                      key={p.studentId}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        background: 'var(--bg-surface)',
+                        padding: '6px 12px',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: 'var(--text-xs)',
+                        border: '1px solid var(--border-subtle)',
+                      }}
+                    >
+                      <span>
+                        <strong style={{ color: 'var(--text-primary)' }}>{p.name}</strong>
+                        <span style={{ color: 'var(--text-tertiary)', marginLeft: '6px' }}>({p.registerNumber})</span>
+                      </span>
+                      <span
+                        className="badge badge-primary"
+                        style={{ fontFamily: 'monospace', fontWeight: 700 }}
+                      >
+                        #{p.chestNumber || 'Not Assigned'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
             <button
-              onClick={() => exportSingleRegistrationPDF(completedRegistration, settings || undefined)}
+              onClick={() => exportSingleRegistrationPDF(completedRegistration, settings || undefined, event.category)}
               className="btn btn-primary btn-md"
             >
               <FileDown size={15} /> Download PDF Slip
@@ -931,6 +968,19 @@ export const RegisterEventPage: React.FC = () => {
                       </div>
                       <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
                         {st.registerNumber} &bull; <span style={{ color: 'var(--text-primary)' }}>{st.class}</span> &bull; {st.department}
+                        {st.chestNumber && (
+                          <span
+                            className="badge badge-primary"
+                            style={{
+                              marginLeft: '6px',
+                              fontFamily: 'monospace',
+                              fontSize: '10px',
+                              fontWeight: 700,
+                            }}
+                          >
+                            #{st.chestNumber}
+                          </span>
+                        )}
                       </div>
                       {/* Live Usage & Remaining Allowance */}
                       <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '3px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>

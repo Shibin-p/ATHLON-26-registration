@@ -15,6 +15,7 @@ import {
   BarChart3,
   History,
   Settings,
+  Hash,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import type { NavItem } from '../../types';
@@ -43,6 +44,12 @@ export const NAV_ITEMS: NavItem[] = [
     path: '/students',
     iconName: 'Users',
     allowedRoles: ['super_coordinator', 'year_coordinator'],
+  },
+  {
+    name: 'Chest Numbers',
+    path: '/chest-numbers',
+    iconName: 'Hash',
+    allowedRoles: ['super_coordinator', 'view_coordinator'],
   },
   {
     name: 'Coordinators',
@@ -76,6 +83,7 @@ export const renderNavIcon = (iconName: string) => {
     case 'Calendar': return <Calendar size={17} />;
     case 'ClipboardList': return <ClipboardList size={17} />;
     case 'Users': return <Users size={17} />;
+    case 'Hash': return <Hash size={17} />;
     case 'UserCheck': return <UserCheck size={17} />;
     case 'BarChart3': return <BarChart3 size={17} />;
     case 'History': return <History size={17} />;

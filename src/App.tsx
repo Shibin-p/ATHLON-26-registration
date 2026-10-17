@@ -16,6 +16,7 @@ import { CoordinatorsPage } from './pages/CoordinatorsPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { ActivityLogPage } from './pages/ActivityLogPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ChestNumbersPage } from './pages/ChestNumbersPage';
 import { ProtectedRoute } from './components/common/ProtectedRoute';
 
 export const App: React.FC = () => {
@@ -129,6 +130,16 @@ export const App: React.FC = () => {
                 element={
                   <ProtectedRoute allowedRoles={['super_coordinator']}>
                     <CoordinatorsPage />
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* Chest Numbers: Super Coordinator and View Coordinator */}
+              <Route
+                path="/chest-numbers"
+                element={
+                  <ProtectedRoute allowedRoles={['super_coordinator', 'view_coordinator']}>
+                    <ChestNumbersPage />
                   </ProtectedRoute>
                 }
               />

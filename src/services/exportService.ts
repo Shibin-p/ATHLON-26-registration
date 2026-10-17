@@ -1,8 +1,9 @@
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import type { Registration, CollegeSettings } from '../types';
+import type { Registration, CollegeSettings, StudentParticipantSummary } from '../types';
 import { sortStudentsByName } from '../utils/studentSort';
+import { isAthleticsEvent } from './participationService';
 
 /**
  * Download sample Excel template for student bulk import
@@ -40,7 +41,7 @@ export const exportRegistrationsToExcel = (
       const isRelay = reg.registrationType === 'relay' && reg.relayOrder && reg.relayOrder.length > 0;
       const sortedParticipants = isRelay ? reg.participantsSnapshot : sortStudentsByName(reg.participantsSnapshot);
       participantsText = sortedParticipants
-        .map((s) => `${s.name} (${s.registerNumber})`)
+        .map((s) => (s.chestNumber ? `${s.name} [Chest: ${s.chestNumber}] (${s.registerNumber})` : `${s.name} (${s.registerNumber})`))
         .join(', ');
     } else {
       participantsText = `${reg.participantCount} participant(s)`;
@@ -155,7 +156,7 @@ export const exportRegistrationsToPDF = (
       const isRelay = r.registrationType === 'relay' && r.relayOrder && r.relayOrder.length > 0;
       const sortedParticipants = isRelay ? r.participantsSnapshot : sortStudentsByName(r.participantsSnapshot);
       participantDesc = sortedParticipants
-        .map((s) => `${s.name} (${s.registerNumber})`)
+        .map((s) => (s.chestNumber ? `${s.name} [#${s.chestNumber}] (${s.registerNumber})` : `${s.name} (${s.registerNumber})`))
         .join(', ');
     } else {
       participantDesc = `${r.participantCount} Participant(s)`;
@@ -235,7 +236,8 @@ export const exportRegistrationsToPDF = (
  */
 export const exportSingleRegistrationPDF = (
   reg: Registration,
-  settings?: CollegeSettings
+  settings?: CollegeSettings,
+  eventCategory?: string
 ) => {
   const doc = new jsPDF({
     orientation: 'portrait',
@@ -298,6 +300,7 @@ export const exportSingleRegistrationPDF = (
   const rawParticipants = reg.participantsSnapshot || [];
   const isRelay = reg.registrationType === 'relay' && reg.relayOrder && reg.relayOrder.length > 0;
   const sortedParticipants = isRelay ? rawParticipants : sortStudentsByName(rawParticipants);
+  const isAthletics = isAthleticsEvent(eventCategory) || Boolean(rawParticipants.some((p) => p.chestNumber));
 
   const participantRows = sortedParticipants.map((p, i) => {
     let roleText = 'Player';
@@ -308,12 +311,17 @@ export const exportSingleRegistrationPDF = (
       roleText = runner ? `Runner ${runner.order}` : 'Relay Member';
     }
 
+    if (isAthletics) {
+      return [i + 1, p.chestNumber || 'Not Assigned', p.registerNumber, p.name, p.year, p.class, roleText];
+    }
     return [i + 1, p.registerNumber, p.name, p.year, p.class, roleText];
   });
 
   autoTable(doc, {
     startY: curY + 4,
-    head: [['#', 'Register No', 'Student Name', 'Year', 'Class', 'Role / Position']],
+    head: isAthletics
+      ? [['#', 'Chest No', 'Register No', 'Student Name', 'Year', 'Class', 'Role / Position']]
+      : [['#', 'Register No', 'Student Name', 'Year', 'Class', 'Role / Position']],
     body: participantRows,
     theme: 'grid',
     headStyles: {
@@ -324,6 +332,17 @@ export const exportSingleRegistrationPDF = (
     bodyStyles: {
       fontSize: 8.5,
     },
+    columnStyles: isAthletics
+      ? {
+          0: { cellWidth: 10, halign: 'center' },
+          1: { cellWidth: 26, halign: 'center', fontStyle: 'bold' },
+          2: { cellWidth: 32 },
+          3: { cellWidth: 46 },
+          4: { cellWidth: 24 },
+          5: { cellWidth: 24 },
+          6: { cellWidth: 26 },
+        }
+      : undefined,
   });
 
   // Signature Block at Bottom
@@ -385,7 +404,7 @@ export const exportDetailedStudentsToExcel = (
       ? reg.createdAt.toDate().toLocaleString()
       : 'N/A';
 
-    const rawParticipants = reg.participantsSnapshot && reg.participantsSnapshot.length > 0
+    const rawParticipants: StudentParticipantSummary[] = reg.participantsSnapshot && reg.participantsSnapshot.length > 0
       ? reg.participantsSnapshot
       : reg.participantIds.map((id) => ({
           studentId: id,
@@ -394,6 +413,7 @@ export const exportDetailedStudentsToExcel = (
           year: reg.year,
           class: reg.class,
           department: reg.department,
+          chestNumber: undefined,
         }));
 
     const isRelay = reg.registrationType === 'relay' && reg.relayOrder && reg.relayOrder.length > 0;
@@ -421,6 +441,7 @@ export const exportDetailedStudentsToExcel = (
         'Role': role,
         'Student Name': p.name,
         'Register Number': p.registerNumber,
+        'Chest Number': p.chestNumber || 'N/A',
         'Coordinator': reg.coordinatorName,
         'Coordinator Email': reg.coordinatorEmail || 'N/A',
         'Registration ID': reg.registrationId,
@@ -460,6 +481,7 @@ export const exportDetailedStudentsToExcel = (
     { wch: 18 },
     { wch: 24 },
     { wch: 16 },
+    { wch: 14 },
     { wch: 20 },
     { wch: 24 },
     { wch: 16 },
@@ -549,7 +571,7 @@ export const exportDetailedStudentsToPDF = (
   let counter = 1;
 
   filtered.forEach((reg) => {
-    const rawParticipants = reg.participantsSnapshot && reg.participantsSnapshot.length > 0
+    const rawParticipants: StudentParticipantSummary[] = reg.participantsSnapshot && reg.participantsSnapshot.length > 0
       ? reg.participantsSnapshot
       : reg.participantIds.map((id) => ({
           studentId: id,
@@ -558,6 +580,7 @@ export const exportDetailedStudentsToPDF = (
           year: reg.year,
           class: reg.class,
           department: reg.department,
+          chestNumber: undefined,
         }));
 
     const isRelay = reg.registrationType === 'relay' && reg.relayOrder && reg.relayOrder.length > 0;
@@ -576,6 +599,7 @@ export const exportDetailedStudentsToPDF = (
 
       tableRows.push([
         counter++,
+        p.chestNumber || (isAthleticsEvent((reg as any).category) ? 'Not Assigned' : '—'),
         p.name,
         p.registerNumber,
         reg.eventNameSnapshot,
@@ -594,6 +618,7 @@ export const exportDetailedStudentsToPDF = (
     startY: 30,
     head: [[
       '#',
+      'Chest No',
       'Athlete Name',
       'Register No',
       'Event',
@@ -617,16 +642,17 @@ export const exportDetailedStudentsToPDF = (
       cellPadding: 2,
     },
     columnStyles: {
-      0: { cellWidth: 8, halign: 'center' },
-      1: { cellWidth: 42 },
-      2: { cellWidth: 26 },
-      3: { cellWidth: 38 },
-      4: { cellWidth: 20 },
-      5: { cellWidth: 20 },
-      6: { cellWidth: 35 },
-      7: { cellWidth: 24 },
-      8: { cellWidth: 35 },
-      9: { cellWidth: 28 },
+      0: { cellWidth: 7, halign: 'center' },
+      1: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
+      2: { cellWidth: 38 },
+      3: { cellWidth: 24 },
+      4: { cellWidth: 36 },
+      5: { cellWidth: 18 },
+      6: { cellWidth: 18 },
+      7: { cellWidth: 32 },
+      8: { cellWidth: 22 },
+      9: { cellWidth: 32 },
+      10: { cellWidth: 26 },
     },
   });
 

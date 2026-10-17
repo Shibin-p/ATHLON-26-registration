@@ -356,7 +356,7 @@ export const RegistrationsPage: React.FC = () => {
                         <strong>{r.participantCount}</strong> participant(s)
                       </div>
                       <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {r.participantsSnapshot?.map((s) => s.name).join(', ')}
+                        {r.participantsSnapshot?.map((s) => (s.chestNumber ? `${s.name} (#${s.chestNumber})` : s.name)).join(', ')}
                       </div>
                     </td>
                     <td>
@@ -500,6 +500,20 @@ export const RegistrationsPage: React.FC = () => {
                     <div>
                       <strong style={{ color: 'var(--text-primary)' }}>{s.name}</strong>
                       <span style={{ color: 'var(--text-tertiary)', marginLeft: '8px' }}>{s.registerNumber}</span>
+                      {s.chestNumber && (
+                        <span
+                          className="badge badge-primary"
+                          style={{
+                            marginLeft: '8px',
+                            fontFamily: 'monospace',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            letterSpacing: '0.04em',
+                          }}
+                        >
+                          Chest #{s.chestNumber}
+                        </span>
+                      )}
                     </div>
                     <span className="badge" style={{ fontSize: '10px', background: 'var(--color-primary-light)', color: '#93c5fd' }}>
                       {s.year} {s.class}

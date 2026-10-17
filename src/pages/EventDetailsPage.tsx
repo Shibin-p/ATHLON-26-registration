@@ -28,6 +28,7 @@ import {
 } from '../services/registrationService';
 import { recordActivity } from '../services/activityLogService';
 import { normalizeAcademicYear, CANONICAL_YEARS } from '../utils/academicYear';
+import { isAthleticsEvent } from '../services/participationService';
 import { ConfirmModal } from '../components/common/ConfirmModal';
 import { EmptyState } from '../components/common/EmptyState';
 import type { Event, Registration } from '../types';
@@ -418,6 +419,7 @@ export const EventDetailsPage: React.FC = () => {
                   <thead>
                     <tr>
                       <th>#</th>
+                      {event && isAthleticsEvent(event.category) && <th>Chest No.</th>}
                       <th>Student Name</th>
                       <th>Register Number</th>
                       <th>Class</th>
@@ -428,6 +430,33 @@ export const EventDetailsPage: React.FC = () => {
                     {myYearRegistration?.participantsSnapshot?.map((st, idx) => (
                       <tr key={st.studentId || idx}>
                         <td>{idx + 1}</td>
+                        {event && isAthleticsEvent(event.category) && (
+                          <td>
+                            {st.chestNumber ? (
+                              <span
+                                className="badge badge-primary"
+                                style={{
+                                  fontFamily: 'monospace',
+                                  fontWeight: 700,
+                                  fontSize: '12px',
+                                }}
+                              >
+                                #{st.chestNumber}
+                              </span>
+                            ) : (
+                              <span
+                                className="badge badge-warning"
+                                style={{
+                                  fontSize: '10px',
+                                  background: 'rgba(245, 158, 11, 0.15)',
+                                  color: '#fbbf24',
+                                }}
+                              >
+                                Not Assigned
+                              </span>
+                            )}
+                          </td>
+                        )}
                         <td>
                           <strong style={{ color: 'var(--text-primary)' }}>{st.name}</strong>
                           {myYearRegistration.captainId === st.studentId && (

@@ -19,7 +19,14 @@ import {
   getParticipationLimits,
   getStudentParticipationCount,
   validateStudentParticipationLimit,
+  isAthleticsEvent,
 } from './participationService';
+import {
+  prepareChestNumberAllocationsInTransaction,
+  commitChestNumberAllocationsInTransaction,
+  type PreparedChestResult,
+} from './chestNumberService';
+import { recordActivity } from './activityLogService';
 
 /**
  * Generate human-readable registration ID: SPT-2026-XXXX
@@ -345,7 +352,9 @@ export const submitRegistrationWithTransaction = async (params: {
     });
   }
 
-  return await runTransaction(db, async (transaction) => {
+  let preparedChestAllocations: PreparedChestResult | null = null;
+
+  const resultRegistration = await runTransaction(db, async (transaction) => {
     // 1. Read event inside transaction
     const eventRef = doc(db, 'events', eventId);
     const eventSnap = await transaction.get(eventRef);
@@ -460,18 +469,66 @@ export const submitRegistrationWithTransaction = async (params: {
       }
     }
 
-    // === ALL WRITES OCCUR HERE (AFTER ALL READS) ===
-
-    // 6. Concurrency touch to ensure atomic OCC serialization
-    for (const studentRef of studentRefs) {
-      transaction.update(studentRef, {
-        lastRegistrationAt: serverTimestamp(),
+    // 5b. Prepare chest number allocation for Athletics events (READ PHASE - must precede writes)
+    const isAthletics = isAthleticsEvent(preEvent.category);
+    let preparedChest: PreparedChestResult | null = null;
+    if (isAthletics) {
+      const studentsForAlloc = participantIds.map((pid, idx) => {
+        const snap = studentSnaps[idx];
+        const sData = snap.data();
+        const summary = participantsSnapshot.find((p) => p.studentId === pid);
+        return {
+          studentId: pid,
+          studentRef: studentRefs[idx],
+          studentSnap: snap,
+          name: sData?.name || summary?.name || 'Athlete',
+          registerNumber: sData?.registerNumber || summary?.registerNumber || '',
+          year: sData?.year || canonicalYear,
+          class: sData?.class || summary?.class,
+          department: sData?.department || summary?.department,
+        };
       });
+
+      preparedChest = await prepareChestNumberAllocationsInTransaction(
+        transaction,
+        studentsForAlloc,
+        coordinatorId
+      );
+      preparedChestAllocations = preparedChest;
     }
 
-    // 9. Prepare new registration record
+    // === ALL WRITES OCCUR HERE (AFTER ALL READS) ===
+
+    // Commit chest number mapping & counter updates
+    if (preparedChest) {
+      commitChestNumberAllocationsInTransaction(transaction, preparedChest);
+    }
+
+    // 6. Concurrency touch to ensure atomic OCC serialization & assign chestNumber to student record
+    for (let i = 0; i < studentRefs.length; i++) {
+      const studentRef = studentRefs[i];
+      const pid = participantIds[i];
+      const studentUpdates: Record<string, any> = {
+        lastRegistrationAt: serverTimestamp(),
+      };
+      const assignedChest = preparedChest?.allocatedMap.get(pid);
+      if (assignedChest) {
+        studentUpdates.chestNumber = assignedChest;
+      }
+      transaction.update(studentRef, studentUpdates);
+    }
+
+    // 9. Prepare new registration record with assigned chest numbers in participantsSnapshot
     const registrationRef = doc(collection(db, 'registrations'));
     const registrationId = generateRegistrationId();
+
+    const finalParticipantsSnapshot: StudentParticipantSummary[] = participantsSnapshot.map((p) => {
+      const chestNum = preparedChest?.allocatedMap.get(p.studentId) || p.chestNumber;
+      return {
+        ...p,
+        ...(chestNum ? { chestNumber: chestNum } : {}),
+      };
+    });
 
     const rawRegistration: Record<string, any> = {
       registrationId,
@@ -483,7 +540,7 @@ export const submitRegistrationWithTransaction = async (params: {
       class: className,
       department,
       participantIds,
-      participantsSnapshot,
+      participantsSnapshot: finalParticipantsSnapshot,
       participantCount: incomingCount,
       registrationType,
       status: 'registered',
@@ -534,6 +591,31 @@ export const submitRegistrationWithTransaction = async (params: {
 
     return newRegistration;
   });
+
+  // Log audit activity for newly allocated chest numbers
+  if (preparedChestAllocations) {
+    for (const alloc of (preparedChestAllocations as PreparedChestResult).allocations.filter((a) => a.isNew)) {
+      recordActivity(
+        'CHEST_NUMBER_ASSIGNED',
+        coordinatorId,
+        coordinatorName,
+        'year_coordinator' as any,
+        'chestNumber',
+        alloc.chestNumber,
+        {
+          studentId: alloc.studentId,
+          studentName: alloc.candidateData?.studentName,
+          registerNumber: alloc.candidateData?.registerNumber,
+          academicYear: alloc.candidateData?.year,
+          assignedChestNumber: alloc.chestNumber,
+          performedByUid: coordinatorId,
+          timestamp: new Date().toISOString(),
+        }
+      ).catch((err) => console.warn('Activity log for chest number assignment failed:', err));
+    }
+  }
+
+  return resultRegistration;
 };
 
 /**
@@ -616,6 +698,8 @@ export const updateRegistrationWithTransaction = async (params: {
       athleticsLimit,
     });
   }
+
+  let preparedChestAllocations: PreparedChestResult | null = null;
 
   await runTransaction(db, async (transaction) => {
     const regRef = doc(db, 'registrations', resolvedDocId);
@@ -718,10 +802,52 @@ export const updateRegistrationWithTransaction = async (params: {
       }
     }
 
+    // 5b. Prepare chest number allocation for Athletics events (READ PHASE - must precede writes)
+    const isAthletics = isAthleticsEvent(preEvent.category);
+    let preparedChest: PreparedChestResult | null = null;
+    if (isAthletics) {
+      const studentsForAlloc = participantIds.map((pid, idx) => {
+        const snap = studentSnaps[idx];
+        const sData = snap.data();
+        const summary = participantsSnapshot.find((p) => p.studentId === pid);
+        return {
+          studentId: pid,
+          studentRef: studentRefs[idx],
+          studentSnap: snap,
+          name: sData?.name || summary?.name || 'Athlete',
+          registerNumber: sData?.registerNumber || summary?.registerNumber || '',
+          year: sData?.year || canonicalYear,
+          class: sData?.class || summary?.class,
+          department: sData?.department || summary?.department,
+        };
+      });
+
+      preparedChest = await prepareChestNumberAllocationsInTransaction(
+        transaction,
+        studentsForAlloc,
+        updatedByUid
+      );
+      preparedChestAllocations = preparedChest;
+    }
+
+    // === ALL WRITES OCCUR HERE (AFTER ALL READS) ===
+
+    if (preparedChest) {
+      commitChestNumberAllocationsInTransaction(transaction, preparedChest);
+    }
+
+    const finalParticipantsSnapshot: StudentParticipantSummary[] = participantsSnapshot.map((p) => {
+      const chestNum = preparedChest?.allocatedMap.get(p.studentId) || p.chestNumber;
+      return {
+        ...p,
+        ...(chestNum ? { chestNumber: chestNum } : {}),
+      };
+    });
+
     // 6. Update registration doc
     const rawUpdates: Record<string, any> = {
       participantIds,
-      participantsSnapshot,
+      participantsSnapshot: finalParticipantsSnapshot,
       participantCount: incomingCount,
       updatedBy: updatedByUid,
       updatedAt: serverTimestamp(),
@@ -740,11 +866,18 @@ export const updateRegistrationWithTransaction = async (params: {
       rawUpdates.relayOrder = relayOrder || reg.relayOrder;
     }
 
-    // 6. Concurrency touch on all student records (Write phase)
-    for (const studentRef of studentRefs) {
-      transaction.update(studentRef, {
+    // 6. Concurrency touch and assign chest numbers on student records (Write phase)
+    for (let i = 0; i < studentRefs.length; i++) {
+      const studentRef = studentRefs[i];
+      const pid = participantIds[i];
+      const studentUpdates: Record<string, any> = {
         lastRegistrationAt: serverTimestamp(),
-      });
+      };
+      const assignedChest = preparedChest?.allocatedMap.get(pid);
+      if (assignedChest) {
+        studentUpdates.chestNumber = assignedChest;
+      }
+      transaction.update(studentRef, studentUpdates);
     }
 
     const cleanUpdates = removeUndefined(rawUpdates);
@@ -764,6 +897,29 @@ export const updateRegistrationWithTransaction = async (params: {
       updatedAt: serverTimestamp(),
     });
   });
+
+  // Log audit activity for any newly allocated chest numbers
+  if (preparedChestAllocations) {
+    for (const alloc of (preparedChestAllocations as PreparedChestResult).allocations.filter((a) => a.isNew)) {
+      recordActivity(
+        'CHEST_NUMBER_ASSIGNED',
+        updatedByUid,
+        'Coordinator',
+        'year_coordinator' as any,
+        'chestNumber',
+        alloc.chestNumber,
+        {
+          studentId: alloc.studentId,
+          studentName: alloc.candidateData?.studentName,
+          registerNumber: alloc.candidateData?.registerNumber,
+          academicYear: alloc.candidateData?.year,
+          assignedChestNumber: alloc.chestNumber,
+          performedByUid: updatedByUid,
+          timestamp: new Date().toISOString(),
+        }
+      ).catch((err) => console.warn('Activity log for chest number assignment failed:', err));
+    }
+  }
 };
 
 /**

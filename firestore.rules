@@ -131,11 +131,15 @@ service cloud.firestore {
       );
 
       // Master student database is strictly managed by Super Coordinator only.
-      // Year Coordinators can only update lastRegistrationAt/updatedAt for registration concurrency locking.
+      // Year Coordinators can update lastRegistrationAt/updatedAt/chestNumber for registration locking & athletics numbers.
       allow create, delete: if isSuperCoordinator();
       allow update: if isSuperCoordinator() || (
         isActiveUser() && (isYearCoordinator() || isSuperCoordinator()) &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastRegistrationAt', 'updatedAt'])
+        (
+          matchesYearScope(resource.data.year) ||
+          ('academicYear' in resource.data && matchesYearScope(resource.data.academicYear))
+        ) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastRegistrationAt', 'updatedAt', 'chestNumber'])
       );
     }
 
@@ -255,6 +259,42 @@ service cloud.firestore {
 
       // System status is strictly immutable once initialized
       allow update, delete: if false;
+    }
+
+    // ========================================================
+    // CHEST NUMBERS COLLECTION: chestNumbers/{chestNumber}
+    // ========================================================
+    match /chestNumbers/{chestNumber} {
+      // Super Coordinators and View Coordinators can read all chest numbers.
+      // Year Coordinators can read chest numbers within their assigned year scope.
+      allow read: if isSuperCoordinator() || isViewCoordinator() || (
+        isActiveUser() && isYearCoordinator() && (
+          matchesYearScope(resource.data.year) ||
+          ('academicYear' in resource.data && matchesYearScope(resource.data.academicYear))
+        )
+      );
+
+      // Super Coordinator can create any chest number mapping.
+      // Year Coordinator can create a mapping for a student within their assigned year scope.
+      allow create: if isSuperCoordinator() || (
+        isActiveUser() && isYearCoordinator() &&
+        (
+          matchesYearScope(request.resource.data.year) ||
+          ('academicYear' in request.resource.data && matchesYearScope(request.resource.data.academicYear))
+        )
+      );
+
+      // Only Super Coordinator can update or delete chest numbers (admin corrections)
+      allow update, delete: if isSuperCoordinator();
+    }
+
+    // ========================================================
+    // COUNTERS COLLECTION: counters/{counterId}
+    // ========================================================
+    match /counters/{counterId} {
+      // Authenticated active coordinators can read and update counters atomically during registrations
+      allow read, create, update: if isAuthenticated() && isActiveUser();
+      allow delete: if isSuperCoordinator();
     }
 
     // Default deny all other paths
